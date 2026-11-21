@@ -6,6 +6,10 @@ DISC=5001
 HEADER=struct.Struct('!4sQ I H H')
 CHUNK=1300
 
+def decode_jpeg(data, scale=1):
+    flags={1:cv2.IMREAD_COLOR,2:cv2.IMREAD_REDUCED_COLOR_2,4:cv2.IMREAD_REDUCED_COLOR_4}
+    return cv2.imdecode(np.frombuffer(data,np.uint8),flags.get(int(scale),cv2.IMREAD_COLOR))
+
 def send_frame(sock, addr, session, seq, data, magic=b'WC30'):
     n=(len(data)+CHUNK-1)//CHUNK
     if n>4096: return 0
@@ -57,7 +61,7 @@ class Receiver:
     def receive(self):
         with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as s:
             s.setsockopt(socket.SOL_SOCKET,socket.SO_BROADCAST,1); s.setsockopt(socket.SOL_SOCKET,socket.SO_RCVBUF,4*1024*1024); s.bind(('',0)); s.settimeout(.002 if self.magic==b'WS40' else .01)
-            port=s.getsockname()[1]; ping=0; frames={}; source=None; last_seen=0; last_seq=None; last_config=None; allowed_ip=None; count=lost=total=0; stamp=time.monotonic(); self.on_frame(None)
+            port=s.getsockname()[1]; ping=0; frames={}; source=None; last_seen=0; last_seq=None; last_config=None; allowed_ip=None; count=lost=total=0; stamp=time.monotonic(); next_decode=0.; previous_fps=None; self.on_frame(None)
             while not self.stop.is_set():
                 now=time.monotonic(); host=self.get_config()['host'].strip() or '255.255.255.255'
                 if host!=last_config:
@@ -90,8 +94,18 @@ class Receiver:
                         if newest is None or 0<((seq-newest[0])&0xffffffff)<0x80000000: newest=(seq,data)
                     if len(frames)>8: del frames[next(iter(frames))]
                 if newest:
-                    seq,data=newest; f=cv2.imdecode(np.frombuffer(data,np.uint8),cv2.IMREAD_COLOR)
+                    c=self.get_config(); fps=float(c.get('receive_fps',0))
+                    if fps!=previous_fps: next_decode=0.; previous_fps=fps
+                    due=time.monotonic()
+                    # Never sleep or queue compressed frames to enforce a limit.
+                    # Keep draining UDP; a later iteration picks the newest frame.
+                    if not c.get('_receive_visible',True) or (fps>0 and due+.002<next_decode):
+                        frames={k:v for k,v in frames.items() if now-v[0]<.15}
+                        newest=None
+                if newest:
+                    seq,data=newest; f=decode_jpeg(data,c.get('decode_scale',1))
                     if f is not None:
+                        if fps>0: next_decode=due+1/fps if not next_decode else max(next_decode+1/fps,due)
                         if last_seq is not None: lost+=max(0,((seq-last_seq)&0xffffffff)-1)
                         last_seq=seq; count+=1; self.on_frame(f)
                 frames={k:v for k,v in frames.items() if now-v[0]<.15}

@@ -1,4 +1,5 @@
-Webcam Low Latency 4.0 — Windows 10/11 x64
+Webcam Low Latency 4.1 — Windows 10/11 x64
+На слабом клиенте включите «Экономия CPU: 20 FPS, JPEG /2» в настройках камеры и во вкладке «Связь» окна экрана.
 Готовая версия из Releases работает без Python: распакуйте весь архив вместе с папкой _internal.
 START_SCREEN_SERVER.bat — передача экрана, системного звука и микрофона.
 START_SCREEN_CLIENT.bat — приём экрана и звука в отдельном окне.

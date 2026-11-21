@@ -16,6 +16,7 @@ from PIL import Image, ImageTk
 from audio_stream import AudioReceiver, AudioSender, list_devices
 from network import Receiver, Sender
 from screen_capture import ScreenCapture, monitor_list, window_list
+from video_display import FramePresenter
 
 DEFAULT = dict(host='', video_port='5002', audio_port='5003', video_enabled=True,
                audio_enabled=True, capture_kind='Монитор', monitor='1: основной', window='',
@@ -27,8 +28,10 @@ DEFAULT = dict(host='', video_port='5002', audio_port='5003', video_enabled=True
                volume=100., sample_rate='48000', channels='2', block_ms='10', buffer_ms='40',
                fit='Вписать', zoom=1., brightness=0., contrast=1., saturation=1., gamma=1.,
                sharpness=0., mirror=False, rotation='0', topmost=False)
+DEFAULT.update(receive_fps='0', decode_scale='1')
 ROLES = {'local': 'Локальный просмотр', 'server': 'Передатчик', 'client': 'Приёмник'}
 LIVE_KEYS = ('system_gain', 'mic_gain', 'send_mute', 'receive_mute', 'volume', 'pause_video')
+LIVE_KEYS += ('receive_fps', 'decode_scale', '_receive_visible')
 
 
 def validate_config(config):
@@ -48,7 +51,9 @@ def validate_config(config):
         c[name] = str(value)
     for name, choices in [('sample_rate', ('16000', '24000', '44100', '48000')),
                           ('channels', ('1', '2')), ('block_ms', ('5', '10', '20')),
-                          ('buffer_ms', ('10', '20', '40', '80', '120', '200'))]:
+                          ('buffer_ms', ('10', '20', '40', '80', '120', '200')),
+                          ('receive_fps', ('0', '15', '20', '25', '30', '60', '120')),
+                          ('decode_scale', ('1', '2', '4'))]:
         if c[name] not in choices:
             raise ValueError('Недопустимое значение: ' + name)
     for name, low, high in [('quality', 30, 95), ('zoom', 1, 5), ('volume', 0, 200),
@@ -72,6 +77,7 @@ def validate_config(config):
 
 class ScreenSession:
     def __init__(self, config):
+        if config['role']=='client': cv2.setNumThreads(1)
         self.config = dict(config)
         self.stop = threading.Event()
         self.lock = threading.Lock()
@@ -138,7 +144,8 @@ def processed_preview(frame, config, width, height):
             dw, dh = width, height
         else:
             dw, dh = max(1, int(w * factor)), max(1, int(h * factor))
-    f = cv2.resize(f, (dw, dh), interpolation=cv2.INTER_LINEAR)
+    if f.shape[1] != dw or f.shape[0] != dh:
+        f = cv2.resize(f, (dw, dh), interpolation=cv2.INTER_LINEAR)
     if config['brightness'] or config['contrast'] != 1 or config['gamma'] != 1:
         values = np.arange(256, dtype=np.float32)
         lut = np.clip(((values / 255) ** (1 / config['gamma']) * 255 - 128)
@@ -182,7 +189,12 @@ class ScreenWindow:
         self.last_render_key = None
         self.full = False
         self.panel_visible = True
-        root.title('Экран и звук 4.0 — ' + ROLES[self.role])
+        self.minimized = False
+        self.last_status_time = 0.
+        self.last_topmost = None
+        self.last_placeholder = None
+        self.ui_config = self.snapshot()
+        root.title('Экран и звук 4.1 — ' + ROLES[self.role])
         try:
             root.geometry(saved.get('geometry', '1250x800'))
         except tk.TclError:
@@ -207,6 +219,7 @@ class ScreenWindow:
         self.panel.pack(side='right', fill='y', padx=4)
         self.view = tk.Label(body, bg='#101318', fg='#b8c0cc', text='Выберите режим и нажмите «Старт»', anchor='center')
         self.view.pack(side='left', fill='both', expand=True)
+        self.presenter = FramePresenter(self.view)
         self.tabs = {}
         for name in ('Связь', 'Экран', 'Звук', 'Вид'):
             outer = ttk.Frame(self.panel)
@@ -248,6 +261,9 @@ class ScreenWindow:
         self.meter_label = ttk.Label(meter_row, text='—')
         self.meter_label.pack(side='left')
         self.refresh_devices()
+        for var in self.vars.values():
+            var.trace_add('write', self.update_ui_config)
+        self.update_ui_config()
         root.bind('<F2>', lambda e: self.toggle_panel())
         root.bind('<F11>', lambda e: self.fullscreen())
         root.bind('<F5>', lambda e: self.shot())
@@ -299,6 +315,11 @@ class ScreenWindow:
         self.check(p, 'Передавать / принимать звук', 'audio_enabled')
         self.entry(p, 'UDP-порт экрана', 'video_port')
         self.entry(p, 'UDP-порт звука', 'audio_port')
+        self.heading(p, 'Нагрузка приёмника')
+        self.combo(p, 'Максимум FPS приёма (0 — без лимита)', 'receive_fps', ['0', '15', '20', '25', '30', '60', '120'])
+        self.combo(p, 'Декодирование JPEG в масштабе 1/N', 'decode_scale', ['1', '2', '4'])
+        ttk.Button(p, text='Экономия CPU: 20 FPS, JPEG /2', command=self.economy).pack(fill='x', pady=4)
+        self.note(p, 'Эти настройки клиента действуют сразу. JPEG /2 уменьшает ширину и высоту изображения вдвое. Лимит FPS отбрасывает лишние кадры без очереди. Звук работает независимо.')
         self.note(p, 'На обоих компьютерах укажите одинаковые порты. Экран: 5002; звук: 5003. Камера использует отдельный порт 5001.')
         self.note(p, 'Сначала запустите передатчик, затем приёмник. При нескольких передатчиках задайте IP вручную.')
         self.note(p, 'Изменения источников и формата вступают в силу после «Старт / применить». Громкость, отключение звука и пауза экрана действуют сразу.')
@@ -361,6 +382,19 @@ class ScreenWindow:
     def snapshot(self):
         return {name: var.get() for name, var in self.vars.items()}
 
+    def update_ui_config(self, *_):
+        try:
+            self.ui_config = self.snapshot()
+            if self.ui_config['topmost'] != self.last_topmost:
+                self.root.attributes('-topmost', self.ui_config['topmost'])
+                self.last_topmost = self.ui_config['topmost']
+        except (ValueError, tk.TclError):
+            pass
+
+    def economy(self):
+        self.vars['receive_fps'].set('20')
+        self.vars['decode_scale'].set('2')
+
     def refresh_devices(self):
         messages = []
         try:
@@ -419,8 +453,8 @@ class ScreenWindow:
         self.session = None
         self.displayed = None
         self.last_render_key = None
-        self.view.configure(image='', text='Остановлено')
-        self.view.image = None
+        self.presenter.clear('Остановлено')
+        self.last_placeholder = 'Остановлено'
         self.transition = False
         self.start_button.configure(state='normal')
         if self.closing:
@@ -428,7 +462,7 @@ class ScreenWindow:
             return
         if self.pending:
             self.session = ScreenSession(self.pending)
-            self.root.title('Экран и звук 4.0 — ' + ROLES[self.pending['role']])
+            self.root.title('Экран и звук 4.1 — ' + ROLES[self.pending['role']])
             self.pending = None
             self.video_status.set('Запуск…')
         else:
@@ -497,31 +531,45 @@ class ScreenWindow:
         if self.closing:
             return
         try:
-            c = self.snapshot()
-            self.root.attributes('-topmost', c['topmost'])
+            c = self.ui_config
+            now = time.monotonic()
+            status_due = now-self.last_status_time >= .2
+            if status_due:
+                self.minimized = self.root.state() == 'iconic'
+                self.last_status_time = now
+            c = dict(c, _receive_visible=c['preview'] and not self.minimized)
             session = self.session
             frame = None
             if session and not self.transition:
-                updated = dict(session.config)
-                updated.update({key: c[key] for key in LIVE_KEYS})
-                session.config = updated
+                if any(session.config.get(key) != c[key] for key in LIVE_KEYS):
+                    updated = dict(session.config)
+                    updated.update({key: c[key] for key in LIVE_KEYS})
+                    session.config = updated
                 with session.lock:
                     frame = session.frame
                     age = time.monotonic() - session.frame_time
                 if session.config['role'] == 'client' and age > .75:
                     frame = None
-                statuses = [service.status for service in (session.capture, session.video) if service]
-                self.video_status.set(' | '.join(statuses) if statuses else 'Передача экрана отключена')
-                self.audio_status.set(session.audio.status if session.audio else 'Звук отключён')
-                peak = session.audio.peak if session.audio else 0
-                self.meter.configure(value=min(100, peak * 100))
-                self.meter_label.configure(text=f'{20 * np.log10(max(peak, .00001)):.0f} dBFS' + (' — пик' if peak >= .99 else ''))
+                if status_due:
+                    statuses = [service.status for service in (session.capture, session.video) if service]
+                    video_text = ' | '.join(statuses) if statuses else 'Передача экрана отключена'
+                    audio_text = session.audio.status if session.audio else 'Звук отключён'
+                    if self.video_status.get() != video_text: self.video_status.set(video_text)
+                    if self.audio_status.get() != audio_text: self.audio_status.set(audio_text)
+                    if not self.minimized:
+                        peak = session.audio.peak if session.audio else 0
+                        self.meter.configure(value=min(100, peak * 100))
+                        self.meter_label.configure(text=f'{20 * np.log10(max(peak, .00001)):.0f} dBFS' + (' — пик' if peak >= .99 else ''))
+            if self.minimized:
+                self.root.after(100, self.render)
+                return
             if not c['preview'] or frame is None:
                 text = 'Предпросмотр отключён' if not c['preview'] else ('Ожидание изображения…' if session else 'Выберите режим и нажмите «Старт»')
                 if c['pause_video'] and session and session.config['role'] != 'client':
                     text = 'Передача экрана на паузе'
-                self.view.configure(image='', text=text)
-                self.view.image = None
+                if text != self.last_placeholder:
+                    self.presenter.clear(text)
+                    self.last_placeholder = text
                 self.displayed = None
                 self.last_render_key = None
             else:
@@ -530,9 +578,8 @@ class ScreenWindow:
                 key = id(frame), size, appearance
                 if key != self.last_render_key:
                     self.displayed = processed_preview(frame, c, *size)
-                    photo = ImageTk.PhotoImage(Image.fromarray(cv2.cvtColor(self.displayed, cv2.COLOR_BGR2RGB)))
-                    self.view.configure(image=photo, text='')
-                    self.view.image = photo
+                    self.presenter.show(self.displayed)
+                    self.last_placeholder = None
                     # Retain the source so Python cannot reuse its id before the next render.
                     self.last_frame = frame
                     self.last_render_key = key
