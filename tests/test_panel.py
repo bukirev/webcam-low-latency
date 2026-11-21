@@ -150,11 +150,45 @@ class DashboardTests(unittest.TestCase):
             self.assertTrue(worker.autostart)
             self.assertEqual(worker.state['settings']['host'],'192.0.2.8')
         self.app.economy()
+        self.assertTrue(all(not worker.sent for worker in self.app.workers.values()))
+        self.app.apply_all()
         for worker in self.app.workers.values():
             command,payload=worker.sent[-1]
             self.assertEqual(command,'apply')
             self.assertEqual(payload['settings']['receive_fps'],'20')
             self.assertEqual(payload['settings']['decode_scale'],'2')
+
+    def test_receiver_hides_sender_controls_and_has_one_apply_button(self):
+        from media_settings import CLIENT_KEYS
+        self.assertEqual(self.app.visible_keys,CLIENT_KEYS)
+        def walk(widget):
+            yield widget
+            for child in widget.winfo_children(): yield from walk(child)
+        labels=[str(w.cget('text')) for w in walk(self.root) if w.winfo_class()=='TButton']
+        self.assertEqual(labels.count('Применить'),1)
+        self.assertFalse(any('Применить настройки' in text for text in labels))
+        self.assertNotIn('Настройки окна',labels)
+        self.assertNotIn('Выбрать область мышью…',labels)
+        self.app.role_var.set('Передатчик')
+        self.app.change_role()
+        self.assertIn('camera',self.app.visible_keys['camera'])
+        self.assertIn('capture_kind',self.app.visible_keys['screen'])
+        self.assertIn('mic_device',self.app.visible_keys['screen'])
+
+    def test_hidden_sender_values_do_not_block_receiver_apply(self):
+        self.app.variables['camera']['camera'].set('not-a-camera')
+        self.app.variables['screen']['fps'].set('not-a-sender-fps')
+        self.app.variables['screen']['sample_rate'].set('not-a-source-rate')
+        self.app.apply_all()
+        self.assertEqual(read_json('settings_screen_client.json')['fps'],'not-a-sender-fps')
+
+    def test_start_running_stream_does_not_apply_pending_edits(self):
+        self.app.start_component('camera')
+        worker=self.app.workers['camera']
+        self.app.variables['camera']['gamma'].set(1.5)
+        self.app.start_component('camera')
+        self.assertEqual(worker.sent,[('show',{})])
+        self.assertTrue(self.app.dirty['camera'])
 
     def test_mode_change_stops_owned_windows_and_loads_separate_profile(self):
         self.app.start_selected()

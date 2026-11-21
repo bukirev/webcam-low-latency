@@ -114,6 +114,34 @@ class DecodeTests(unittest.TestCase):
 
 
 class ScreenUITests(unittest.TestCase):
+    def test_receiver_viewer_has_only_local_settings_and_managed_mode_has_no_apply(self):
+        import tkinter as tk
+        import screen_window as screen
+        root=tk.Tk();root.withdraw();root.after=lambda *a:None
+        try:
+            with patch.object(screen.ScreenWindow,'refresh_devices',lambda self:None), \
+                    patch.object(screen.Path,'read_text',side_effect=FileNotFoundError):
+                app=screen.ScreenWindow(root,'client',controlled=True)
+            self.assertEqual(set(app.device_combos),{'output_device'})
+            self.assertEqual(app.start_button.winfo_manager(),'')
+            self.assertEqual(app.role_combo.winfo_manager(),'')
+            app.toggle_panel()
+            app.toggle_panel()
+            self.assertFalse(app.panel_visible)
+            self.assertEqual(app.panel.tab(1,'state'),'hidden')
+            with patch.object(app,'refresh_devices',lambda:None):
+                app.role_var.set(screen.ROLES['server'])
+                app.rebuild_controls()
+                self.assertIn('monitor',app.device_combos)
+                self.assertNotEqual(app.panel.tab(1,'state'),'hidden')
+                app.role_var.set(screen.ROLES['client'])
+                app.rebuild_controls()
+                self.assertEqual(set(app.device_combos),{'output_device'})
+            config=dict(screen.DEFAULT,role='client',fps='unused',sample_rate='unused',quality=999)
+            self.assertEqual(screen.validate_config(config)['receive_fps'],'0')
+        finally:
+            root.destroy()
+
     def test_window_attributes_and_uploads_are_not_repeated_per_poll(self):
         import tkinter as tk
         import screen_window as screen

@@ -13,7 +13,7 @@ from tkinter import ttk
 from PIL import Image, ImageTk
 from video_display import FramePresenter
 from pathlib import Path
-from media_settings import CAMERA_DEFAULT, APP_VERSION, validate_settings, write_json
+from media_settings import CAMERA_DEFAULT, APP_VERSION, CLIENT_KEYS, validate_settings, write_json
 from panel_control import ManagedClient, unmanaged_environment
 managed=ManagedClient.from_environment()
 os.chdir(managed.directory if managed else Path(sys.executable if getattr(sys, 'frozen', False) else __file__).resolve().parent)
@@ -79,9 +79,13 @@ def worker():
     if cap is not None: cap.release()
 
 def combo(label,k,values):
+    if MODE=='client' and k not in CLIENT_KEYS['camera']: return
     ttk.Label(controls,text=label).pack(anchor='w'); ttk.Combobox(controls,textvariable=V[k],values=values,state='readonly').pack(fill='x',pady=(0,5))
-def check(label,k): ttk.Checkbutton(controls,text=label,variable=V[k]).pack(anchor='w')
+def check(label,k):
+    if MODE=='client' and k not in CLIENT_KEYS['camera']: return
+    ttk.Checkbutton(controls,text=label,variable=V[k]).pack(anchor='w')
 def scale(label,k,a,b):
+    if MODE=='client' and k not in CLIENT_KEYS['camera']: return
     row=ttk.Frame(controls); row.pack(fill='x'); ttk.Label(row,text=label).pack(side='left'); val=ttk.Label(row); val.pack(side='right'); V[k].trace_add('write',lambda *_:val.configure(text=f'{V[k].get():.2f}')); val.configure(text=f'{V[k].get():.2f}'); ttk.Scale(controls,from_=a,to=b,variable=V[k]).pack(fill='x')
 if MODE=='client':
     ttk.Label(controls,text='IP передатчика (пусто — поиск)').pack(anchor='w')
@@ -97,10 +101,11 @@ combo('Камера (индекс)','camera',[str(i) for i in range(10)])
 combo('Разрешение','resolution',['640x480','800x600','1280x720','1920x1080','2560x1440','3840x2160']); combo('FPS','fps',['15','25','30','50','60','120']); combo('Формат','codec',['MJPG','YUY2']); combo('Соотношение сторон','ratio',['Оригинал','4:3','16:9','16:10','21:9','1:1']); combo('Масштабирование','fit',['Вписать','Растянуть','Заполнить']); scale('Зум','zoom',1,5); combo('Поворот','rotation',['0','90','180','270']); check('Зеркально','mirror'); check('Перевернуть','flip'); check('Поверх окон','top')
 ttk.Label(controls,text='Обработка изображения').pack(anchor='w',pady=(10,0))
 for label,k,a,b in [('Яркость','brightness',-100,100),('Контраст','contrast',.2,3),('Насыщенность','saturation',0,2),('Резкость','sharpness',0,2),('Гамма','gamma',.2,3)]: scale(label,k,a,b)
-ttk.Label(controls,text='Настройки камеры (если поддерживаются)').pack(anchor='w',pady=(10,0))
+if MODE!='client': ttk.Label(controls,text='Настройки камеры (если поддерживаются)').pack(anchor='w',pady=(10,0))
 check('Автоэкспозиция','autoexp'); scale('Экспозиция','exposure',-13,-1); check('Автофокус','autofocus'); scale('Фокус','focus',0,255); check('Автобаланс белого','autowb'); scale('Баланс белого','white',2000,7500)
 def reset():
-    for k,v in DEFAULT.items(): V[k].set(v)
+    for k,v in DEFAULT.items():
+        if MODE!='client' or k in CLIENT_KEYS['camera'] or k=='host': V[k].set(v)
 ttk.Button(controls,text='Сброс настроек',command=reset).pack(fill='x',pady=8)
 for v in V.values(): v.trace_add('write',update_config)
 update_config()
@@ -176,6 +181,7 @@ def render():
     root.after(10,render)
 def toggle_panel():
     global hidden
+    if managed and hidden: return
     hidden=not hidden
     if hidden: panel.pack_forget()
     else: panel.pack(side='right',fill='y',before=view)
@@ -194,7 +200,9 @@ def open_screen():
     import subprocess
     command=[sys.executable] if getattr(sys,'frozen',False) else [sys.executable,str(Path(__file__).resolve())]
     subprocess.Popen(command+['screen',MODE],env=unmanaged_environment())
-for label,fn in [('Экран и звук',open_screen),('Настройки',toggle_panel),('Полный экран',fullscreen),('Снимок',shot)]: ttk.Button(bar,text=label,command=fn).pack(side='right')
+viewer_actions=[('Полный экран',fullscreen),('Снимок',shot)]
+if not managed: viewer_actions=[('Экран и звук',open_screen),('Настройки',toggle_panel)]+viewer_actions
+for label,fn in viewer_actions: ttk.Button(bar,text=label,command=fn).pack(side='right')
 def panel_command(command,message):
     if command=='shutdown': close()
     elif command=='apply':

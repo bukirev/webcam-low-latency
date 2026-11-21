@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 import tempfile
 
-APP_VERSION = '4.2'
+APP_VERSION = '4.3'
 ROLES = {'client': 'Приёмник', 'server': 'Передатчик', 'local': 'Локальный просмотр'}
 CAMERA_DEFAULT = dict(host='', quality=80, camera='0', resolution='1280x720', fps='30', codec='MJPG',
                       ratio='Оригинал', fit='Вписать', zoom=1, brightness=0, contrast=1, saturation=1,
@@ -97,6 +97,27 @@ for fields, group in ((CAMERA_FIELDS, 'Обработка вида камеры'
                                ('saturation','Насыщенность',(0,2)), ('gamma','Гамма',(.2,3)), ('sharpness','Резкость',(0,2))]:
         fields.append((group, key, label, limits))
 
+CLIENT_KEYS = {
+    'camera': {'receive_fps','decode_scale','preview','ratio','fit','zoom','rotation','mirror','flip','top',
+               'brightness','contrast','saturation','gamma','sharpness'},
+    'screen': {'video_enabled','audio_enabled','receive_fps','decode_scale','preview','video_port','audio_port',
+               'fit','zoom','rotation','mirror','topmost','brightness','contrast','saturation','gamma','sharpness',
+               'output_device','volume','receive_mute','block_ms','buffer_ms'},
+}
+
+
+def visible_fields(fields, kind, role):
+    result = []
+    for group,key,label,choices in fields:
+        if role=='client':
+            if key not in CLIENT_KEYS[kind]: continue
+            if key=='video_enabled': group,label='Приём экрана','Принимать экран'
+            elif key=='audio_enabled': group,label='Воспроизведение','Принимать звук'
+            elif key=='block_ms': group,label='Буфер воспроизведения','Блок вывода, мс'
+            elif key=='buffer_ms': group='Буфер воспроизведения'
+        result.append((group,key,label,choices))
+    return result
+
 
 def settings_path(kind, role):
     if kind not in DEFAULTS or role not in ROLES:
@@ -149,6 +170,7 @@ def validate_settings(kind, values, role, *, require_sources=True):
         if key in values: result[key] = values[key]
     fields = CAMERA_FIELDS if kind == 'camera' else SCREEN_FIELDS + AUDIO_FIELDS
     for _, key, label, choices in fields:
+        if role=='client' and key not in CLIENT_KEYS[kind]: continue
         value = result[key]
         default = DEFAULTS[kind][key]
         if isinstance(default, bool):

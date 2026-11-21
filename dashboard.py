@@ -6,7 +6,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 from media_settings import (APP_VERSION, ROLES, DEFAULTS, CAMERA_FIELDS, SCREEN_FIELDS, AUDIO_FIELDS,
-                            load_settings, read_json, settings_path, validate_settings, write_json)
+                            load_settings, read_json, settings_path, validate_settings, write_json, visible_fields)
 from panel_control import ManagedProcess
 
 
@@ -19,7 +19,13 @@ class Dashboard:
         self.role_var = tk.StringVar(root, value=ROLES[self.role])
         self.host = tk.StringVar(root)
         self.message = tk.StringVar(root, value='Настройте потоки и нажмите «Запустить выбранное».')
-        self.variables = {kind: {} for kind in DEFAULTS}
+        self.variables = {}
+        for kind,defaults in DEFAULTS.items():
+            self.variables[kind]={}
+            for key,default in defaults.items():
+                if key=='host': continue
+                cls=tk.BooleanVar if isinstance(default,bool) else tk.DoubleVar if isinstance(default,(int,float)) else tk.StringVar
+                self.variables[kind][key]=cls(root,value=default)
         self.dirty = {'camera': False, 'screen': False}
         self.workers = {'camera': None, 'screen': None}
         self.awaiting = {'camera':False,'screen':False}
@@ -58,7 +64,8 @@ class Dashboard:
         self.start_all_button = ttk.Button(actions, text='▶ Запустить выбранное', command=self.start_selected)
         self.start_all_button.pack(side='left', padx=(0, 6))
         ttk.Button(actions, text='■ Остановить всё', command=self.stop_all).pack(side='left', padx=3)
-        ttk.Button(actions, text='Применить / сохранить всё', command=self.apply_all).pack(side='left', padx=3)
+        self.apply_button=ttk.Button(actions, text='Применить', command=self.apply_all)
+        self.apply_button.pack(side='left', padx=3)
         ttk.Button(actions, text='Экономия CPU обоим', command=self.economy).pack(side='right')
         cards = ttk.Frame(root, padding=(12, 0, 12, 8))
         cards.pack(fill='x')
@@ -77,14 +84,12 @@ class Dashboard:
             self.buttons[kind] = start
             row = ttk.Frame(card)
             row.pack(fill='x', pady=(5, 0))
-            for text, command in [('Настройки окна', 'settings'), ('Полный экран', 'fullscreen'), ('Снимок', 'snapshot')]:
+            for text, command in [('Полный экран', 'fullscreen'), ('Снимок', 'snapshot')]:
                 ttk.Button(row, text=text, command=lambda k=kind,c=command: self.window_command(k,c)).pack(side='left', padx=(0, 4))
 
         self.notebook = ttk.Notebook(root)
         self.notebook.pack(fill='both', expand=True, padx=12)
-        self.add_tab('Камера', 'camera', CAMERA_FIELDS)
-        self.add_tab('Экран', 'screen', SCREEN_FIELDS)
-        self.add_tab('Звук', 'screen', AUDIO_FIELDS)
+        self.rebuild_tabs()
         footer = ttk.Frame(root, padding=(12, 8))
         footer.pack(fill='x')
         ttk.Label(footer, textvariable=self.message, wraplength=1060).pack(anchor='w')
@@ -112,11 +117,11 @@ class Dashboard:
         inner.columnconfigure((0, 1), weight=1, uniform='settings')
         actions = ttk.Frame(inner)
         actions.grid(row=0, column=0, columnspan=2, sticky='ew', pady=(0, 8))
-        ttk.Button(actions, text='Применить настройки '+('камеры' if kind=='camera' else 'экрана и звука'),
-                    command=lambda: self.apply_component(kind)).pack(side='left')
         if kind == 'screen':
-            ttk.Button(actions, text='Обновить устройства / окна', command=self.refresh_devices).pack(side='left', padx=6)
-            if title == 'Экран':
+            if self.role!='client' or title=='Звук':
+                text='Обновить устройства вывода' if self.role=='client' else 'Обновить устройства / окна'
+                ttk.Button(actions, text=text, command=self.refresh_devices).pack(side='left', padx=6)
+            if title == 'Экран' and self.role!='client':
                 ttk.Button(actions, text='Выбрать область мышью…', command=lambda: self.window_command('screen','region')).pack(side='left')
         groups = {}
         for group, key, label, choices in fields:
@@ -127,8 +132,7 @@ class Dashboard:
                 groups[group] = container
             parent = groups[group]
             default = DEFAULTS[kind][key]
-            cls = tk.BooleanVar if isinstance(default, bool) else tk.DoubleVar if isinstance(default, (int,float)) else tk.StringVar
-            var = self.variables[kind].setdefault(key, cls(self.root, value=default))
+            var = self.variables[kind][key]
             if isinstance(default, bool):
                 ttk.Checkbutton(parent, text=label, variable=var).pack(anchor='w', pady=3)
                 continue
@@ -153,6 +157,16 @@ class Dashboard:
             widget.bind('<MouseWheel>', wheel)
             for child in widget.winfo_children(): bind_wheel(child)
         bind_wheel(inner)
+
+    def rebuild_tabs(self):
+        for tab in self.notebook.winfo_children(): tab.destroy()
+        self.device_combos.clear()
+        self.last_devices=None
+        self.visible_keys={kind:set() for kind in DEFAULTS}
+        for title,kind,fields in [('Камера','camera',CAMERA_FIELDS),('Экран','screen',SCREEN_FIELDS),('Звук','screen',AUDIO_FIELDS)]:
+            fields=visible_fields(fields,kind,self.role)
+            self.visible_keys[kind].update(field[1] for field in fields)
+            self.add_tab(title,kind,fields)
 
     def mark_dirty(self, kind):
         if not self.loading:
@@ -187,6 +201,9 @@ class Dashboard:
         if worker and worker.running():
             if worker.closing or worker.role != self.role:
                 raise ValueError('Дождитесь завершения предыдущего окна')
+            if start and worker.state.get('active'):
+                worker.command('show')
+                return worker
             if start:
                 worker.command('apply', settings=config, start=True)
                 self.awaiting[kind]=True
@@ -232,7 +249,10 @@ class Dashboard:
                 self.save_profile(kind, config)
             self.dirty[kind] = False
             self.message.set('Настройки применены / сохранены: '+('камера' if kind=='camera' else 'экран и звук'))
-        except (OSError, ValueError, tk.TclError, RuntimeError) as e: self.handle_error(e)
+            return True
+        except (OSError, ValueError, tk.TclError, RuntimeError) as e:
+            self.handle_error(e)
+            return False
 
     def apply_all(self):
         try:
@@ -242,7 +262,9 @@ class Dashboard:
         except (ValueError, tk.TclError) as e:
             self.handle_error(e)
             return
-        for kind in DEFAULTS: self.apply_component(kind)
+        for kind in DEFAULTS:
+            if not self.apply_component(kind): return
+        self.message.set('Параметры отправлены в работающие окна и сохранены для следующего запуска.')
 
     def stop_component(self, kind):
         worker = self.workers[kind]
@@ -275,7 +297,7 @@ class Dashboard:
         for kind in DEFAULTS:
             self.variables[kind]['receive_fps'].set('20')
             self.variables[kind]['decode_scale'].set('2')
-        self.apply_all()
+        self.message.set('Выбрана экономия CPU для обоих потоков. Нажмите «Применить».')
 
     def change_role(self, *_):
         new_role = next(key for key,value in ROLES.items() if value==self.role_var.get())
@@ -289,6 +311,7 @@ class Dashboard:
         self.stop_all()
         self.role = new_role
         self.load_role()
+        self.rebuild_tabs()
         self.message.set('Режим изменён. Дождитесь остановки старых окон и запустите нужные потоки.')
 
     def update_from_worker(self, kind, worker):

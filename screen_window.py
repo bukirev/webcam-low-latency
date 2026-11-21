@@ -29,6 +29,7 @@ LIVE_KEYS += ('receive_fps', 'decode_scale', '_receive_visible')
 
 def validate_config(config):
     c = dict(config)
+    client=c.get('role')=='client'
     for name in ('video_port', 'audio_port'):
         value = int(c[name])
         if not 1024 <= value <= 65535 or value == 5001:
@@ -38,6 +39,7 @@ def validate_config(config):
         raise ValueError('Для экрана и звука нужны разные порты.')
     for name, low, high in [('fps', 1, 120), ('max_width', 0, 7680), ('width', 1, 16384),
                             ('height', 1, 16384), ('left', -32768, 32768), ('top', -32768, 32768)]:
+        if client: continue
         value = int(c[name])
         if not low <= value <= high:
             raise ValueError(f'{name}: допустимый диапазон {low}–{high}.')
@@ -47,12 +49,14 @@ def validate_config(config):
                           ('buffer_ms', ('10', '20', '40', '80', '120', '200')),
                           ('receive_fps', ('0', '15', '20', '25', '30', '60', '120')),
                           ('decode_scale', ('1', '2', '4'))]:
+        if client and name in ('sample_rate','channels'): continue
         if c[name] not in choices:
             raise ValueError('Недопустимое значение: ' + name)
     for name, low, high in [('quality', 30, 95), ('zoom', 1, 5), ('volume', 0, 200),
                             ('system_gain', 0, 200), ('mic_gain', 0, 300),
                             ('brightness', -100, 100), ('contrast', .2, 3),
                             ('saturation', 0, 2), ('gamma', .2, 3), ('sharpness', 0, 2)]:
+        if client and name in ('quality','system_gain','mic_gain'): continue
         value = float(c[name])
         if not np.isfinite(value) or not low <= value <= high:
             raise ValueError('Недопустимое значение: ' + name)
@@ -154,8 +158,9 @@ def processed_preview(frame, config, width, height):
 
 
 class ScreenWindow:
-    def __init__(self, root, role, initial=None):
+    def __init__(self, root, role, initial=None, controlled=False):
         self.root = root
+        self.controlled=controlled
         self.role = role if role in ROLES else 'local'
         self.settings_path = Path(f'settings_screen_{self.role}.json')
         try:
@@ -180,6 +185,7 @@ class ScreenWindow:
         self.pending = None
         self.monitors = []
         self.device_combos = {}
+        self.scale_trace_ids=[]
         self.displayed = None
         self.last_render_key = None
         self.full = False
@@ -199,14 +205,17 @@ class ScreenWindow:
 
         toolbar = ttk.Frame(root, padding=6)
         toolbar.pack(fill='x')
-        ttk.Label(toolbar, text='Режим:').pack(side='left')
+        if not controlled: ttk.Label(toolbar, text='Режим:').pack(side='left')
         self.role_combo=ttk.Combobox(toolbar, textvariable=self.role_var, values=list(ROLES.values()),
                      state='readonly', width=21)
-        self.role_combo.pack(side='left', padx=6)
+        self.role_combo.bind('<<ComboboxSelected>>',lambda e:self.rebuild_controls())
+        if not controlled: self.role_combo.pack(side='left', padx=6)
         self.start_button = ttk.Button(toolbar, text='▶ Старт / применить', command=self.apply)
-        self.start_button.pack(side='left', padx=3)
-        ttk.Button(toolbar, text='■ Стоп', command=self.stop_session).pack(side='left', padx=3)
-        ttk.Button(toolbar, text='Настройки (F2)', command=self.toggle_panel).pack(side='right')
+        if not controlled:
+            self.start_button.pack(side='left', padx=3)
+            ttk.Button(toolbar, text='■ Стоп', command=self.stop_session).pack(side='left', padx=3)
+            ttk.Button(toolbar, text='Настройки (F2)', command=self.toggle_panel).pack(side='right')
+        else: ttk.Label(toolbar,text='Управление и настройки — в единой панели').pack(side='left')
         ttk.Button(toolbar, text='Полный экран (F11)', command=self.fullscreen).pack(side='right', padx=3)
         ttk.Button(toolbar, text='Снимок (F5)', command=self.shot).pack(side='right', padx=3)
         body = ttk.Frame(root)
@@ -234,15 +243,7 @@ class ScreenWindow:
             self.tabs[name] = inner
 
         self.build_controls()
-        for inner in self.tabs.values():
-            def bind_wheel(widget, canvas=inner.master):
-                def wheel(event):
-                    canvas.yview_scroll(-int(event.delta / 120), 'units')
-                    return 'break'
-                widget.bind('<MouseWheel>', wheel)
-                for child in widget.winfo_children():
-                    bind_wheel(child, canvas)
-            bind_wheel(inner)
+        self.bind_scroll()
         footer = ttk.Frame(root, padding=5)
         footer.pack(fill='x')
         self.video_status = tk.StringVar(value='Остановлено. Камера работает независимо в своём окне.')
@@ -299,11 +300,15 @@ class ScreenWindow:
                 value.configure(text=f'{self.vars[key].get():.2f}')
             except tk.TclError:
                 pass
-        self.vars[key].trace_add('write', refresh)
+        trace=self.vars[key].trace_add('write', refresh)
+        self.scale_trace_ids.append((self.vars[key],trace))
         refresh()
         ttk.Scale(parent, variable=self.vars[key], from_=low, to=high).pack(fill='x')
 
     def build_controls(self):
+        if self.role_var.get()==ROLES['client']:
+            self.build_receiver_controls()
+            return
         p = self.tabs['Связь']
         self.heading(p, 'Передача по локальной сети')
         self.entry(p, 'IP передатчика (пусто — автопоиск)', 'host')
@@ -375,6 +380,60 @@ class ScreenWindow:
             self.scale(p, label, key, low, high)
         self.note(p, 'Изменения вида применяются сразу и не меняют передаваемое изображение. F5 сохраняет снимок текущего вида.')
 
+    def bind_scroll(self):
+        for inner in self.tabs.values():
+            def bind_wheel(widget,canvas=inner.master):
+                def wheel(event):
+                    canvas.yview_scroll(-int(event.delta/120),'units')
+                    return 'break'
+                widget.bind('<MouseWheel>',wheel)
+                for child in widget.winfo_children(): bind_wheel(child,canvas)
+            bind_wheel(inner)
+
+    def rebuild_controls(self):
+        for var,trace in self.scale_trace_ids: var.trace_remove('write',trace)
+        self.scale_trace_ids=[]
+        for inner in self.tabs.values():
+            for child in inner.winfo_children(): child.destroy()
+        self.device_combos={}
+        self.panel.insert(1,self.tabs['Экран'].master.master)
+        self.panel.tab(self.tabs['Экран'].master.master,state='normal')
+        self.build_controls()
+        self.bind_scroll()
+        self.refresh_devices()
+
+    def build_receiver_controls(self):
+        p=self.tabs['Связь']
+        self.heading(p,'Подключение к передатчику')
+        self.entry(p,'IP передатчика (пусто — автопоиск)','host')
+        self.check(p,'Принимать экран','video_enabled')
+        self.check(p,'Принимать звук','audio_enabled')
+        self.entry(p,'UDP-порт экрана','video_port')
+        self.entry(p,'UDP-порт звука','audio_port')
+        self.heading(p,'Нагрузка приёмника')
+        self.combo(p,'Лимит FPS (0 — без лимита)','receive_fps',['0','15','20','25','30','60','120'])
+        self.combo(p,'JPEG 1/N (1 — полное качество)','decode_scale',['1','2','4'])
+        self.check(p,'Показывать изображение','preview')
+        self.panel.hide(1)
+        p=self.tabs['Звук']
+        self.heading(p,'Воспроизведение на этом компьютере')
+        self.device_combos['output_device']=self.combo(p,'Динамики / наушники','output_device',['По умолчанию'])
+        self.scale(p,'Громкость, %','volume',0,200)
+        self.check(p,'Отключить воспроизведение','receive_mute')
+        self.combo(p,'Блок вывода, мс','block_ms',['5','10','20'])
+        self.combo(p,'Буфер приёмника, мс','buffer_ms',['10','20','40','80','120','200'])
+        ttk.Button(p,text='Обновить устройства вывода',command=self.refresh_devices).pack(fill='x',pady=5)
+        p=self.tabs['Вид']
+        self.heading(p,'Отображение принятого экрана')
+        self.combo(p,'Масштабирование','fit',['Вписать','Заполнить','Растянуть'])
+        self.scale(p,'Зум','zoom',1,5)
+        self.combo(p,'Поворот','rotation',['0','90','180','270'])
+        self.check(p,'Зеркально','mirror')
+        self.check(p,'Поверх окон','topmost')
+        for key,label,low,high in [('brightness','Яркость',-100,100),('contrast','Контраст',.2,3),
+                                    ('saturation','Насыщенность',0,2),('gamma','Гамма',.2,3),('sharpness','Резкость',0,2)]:
+            self.scale(p,label,key,low,high)
+
     def snapshot(self):
         return {name: var.get() for name, var in self.vars.items()}
 
@@ -393,23 +452,22 @@ class ScreenWindow:
 
     def refresh_devices(self):
         messages = []
-        try:
-            self.monitors = monitor_list()
-            monitors = [f'{i}: {m["width"]}×{m["height"]} ({m["left"]}, {m["top"]})'
-                        for i, m in enumerate(self.monitors) if i]
-            self.device_combos['monitor'].configure(values=monitors)
-            old_index = self.vars['monitor'].get().split(':', 1)[0]
-            match = next((m for m in monitors if m.split(':', 1)[0] == old_index), None)
-            if match or monitors:
-                self.vars['monitor'].set(match or monitors[0])
-            windows = window_list()
-            self.device_combos['window'].configure(values=windows)
-        except Exception as e:
-            messages.append('Мониторы: ' + str(e))
+        if self.role_var.get()!=ROLES['client']:
+            try:
+                self.monitors = monitor_list()
+                monitors = [f'{i}: {m["width"]}×{m["height"]} ({m["left"]}, {m["top"]})'
+                            for i, m in enumerate(self.monitors) if i]
+                self.device_combos['monitor'].configure(values=monitors)
+                old_index = self.vars['monitor'].get().split(':', 1)[0]
+                match = next((m for m in monitors if m.split(':', 1)[0] == old_index), None)
+                if match or monitors: self.vars['monitor'].set(match or monitors[0])
+                self.device_combos['window'].configure(values=window_list())
+            except Exception as e:
+                messages.append('Мониторы: ' + str(e))
         try:
             devices = list_devices()
             for key, choices in devices.items():
-                self.device_combos[key].configure(values=['По умолчанию'] + choices)
+                if key in self.device_combos: self.device_combos[key].configure(values=['По умолчанию'] + choices)
         except Exception as e:
             messages.append('Аудиоустройства: ' + str(e))
         if messages:
@@ -585,6 +643,7 @@ class ScreenWindow:
         self.root.after(15, self.render)
 
     def toggle_panel(self):
+        if self.controlled and not self.panel_visible: return
         self.panel_visible = not self.panel_visible
         if self.panel_visible:
             self.panel.pack(side='right', fill='y', padx=4, before=self.view)
@@ -632,7 +691,7 @@ def main(role='local'):
     except (OSError, AttributeError):
         pass
     root = tk.Tk()
-    app=ScreenWindow(root, role, initial=managed.initial if managed else None)
+    app=ScreenWindow(root, role, initial=managed.initial if managed else None,controlled=bool(managed))
     if managed:
         app.role_combo.configure(state='disabled')
         def command(name,message):
