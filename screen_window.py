@@ -17,17 +17,10 @@ from audio_stream import AudioReceiver, AudioSender, list_devices
 from network import Receiver, Sender
 from screen_capture import ScreenCapture, monitor_list, window_list
 from video_display import FramePresenter
+from media_settings import SCREEN_DEFAULT, APP_VERSION, validate_settings, write_json
+from panel_control import ManagedClient
 
-DEFAULT = dict(host='', video_port='5002', audio_port='5003', video_enabled=True,
-               audio_enabled=True, capture_kind='Монитор', monitor='1: основной', window='',
-               left='0', top='0', width='1280', height='720', max_width='1920', fps='30',
-               quality=80., cursor=True, pause_video=False, preview=True,
-               system_enabled=True, mic_enabled=True, system_device='По умолчанию',
-               mic_device='По умолчанию', output_device='По умолчанию',
-               system_gain=100., mic_gain=100., send_mute=False, receive_mute=False,
-               volume=100., sample_rate='48000', channels='2', block_ms='10', buffer_ms='40',
-               fit='Вписать', zoom=1., brightness=0., contrast=1., saturation=1., gamma=1.,
-               sharpness=0., mirror=False, rotation='0', topmost=False)
+DEFAULT = dict(SCREEN_DEFAULT)
 DEFAULT.update(receive_fps='0', decode_scale='1')
 ROLES = {'local': 'Локальный просмотр', 'server': 'Передатчик', 'client': 'Приёмник'}
 LIVE_KEYS = ('system_gain', 'mic_gain', 'send_mute', 'receive_mute', 'volume', 'pause_video')
@@ -161,7 +154,7 @@ def processed_preview(frame, config, width, height):
 
 
 class ScreenWindow:
-    def __init__(self, root, role):
+    def __init__(self, root, role, initial=None):
         self.root = root
         self.role = role if role in ROLES else 'local'
         self.settings_path = Path(f'settings_screen_{self.role}.json')
@@ -171,6 +164,8 @@ class ScreenWindow:
                 saved = {}
         except (OSError, ValueError):
             saved = {}
+        if initial:
+            saved.update(validate_settings('screen',initial,self.role,require_sources=False))
         self.vars = {}
         for name, default in DEFAULT.items():
             value = saved.get(name, default)
@@ -194,7 +189,7 @@ class ScreenWindow:
         self.last_topmost = None
         self.last_placeholder = None
         self.ui_config = self.snapshot()
-        root.title('Экран и звук 4.1 — ' + ROLES[self.role])
+        root.title('Экран и звук '+APP_VERSION+' — ' + ROLES[self.role])
         try:
             root.geometry(saved.get('geometry', '1250x800'))
         except tk.TclError:
@@ -205,8 +200,9 @@ class ScreenWindow:
         toolbar = ttk.Frame(root, padding=6)
         toolbar.pack(fill='x')
         ttk.Label(toolbar, text='Режим:').pack(side='left')
-        ttk.Combobox(toolbar, textvariable=self.role_var, values=list(ROLES.values()),
-                     state='readonly', width=21).pack(side='left', padx=6)
+        self.role_combo=ttk.Combobox(toolbar, textvariable=self.role_var, values=list(ROLES.values()),
+                     state='readonly', width=21)
+        self.role_combo.pack(side='left', padx=6)
         self.start_button = ttk.Button(toolbar, text='▶ Старт / применить', command=self.apply)
         self.start_button.pack(side='left', padx=3)
         ttk.Button(toolbar, text='■ Стоп', command=self.stop_session).pack(side='left', padx=3)
@@ -428,6 +424,7 @@ class ScreenWindow:
             messagebox.showerror('Проверьте настройки', str(e), parent=self.root)
             return
         if self.transition:
+            if not self.closing: self.pending=config
             return
         self.pending = config
         self.transition = True
@@ -462,7 +459,7 @@ class ScreenWindow:
             return
         if self.pending:
             self.session = ScreenSession(self.pending)
-            self.root.title('Экран и звук 4.1 — ' + ROLES[self.pending['role']])
+            self.root.title('Экран и звук '+APP_VERSION+' — ' + ROLES[self.pending['role']])
             self.pending = None
             self.video_status.set('Запуск…')
         else:
@@ -619,7 +616,7 @@ class ScreenWindow:
         try:
             config = self.snapshot()
             config['geometry'] = self.root.geometry()
-            self.settings_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding='utf-8')
+            write_json(self.settings_path,config)
         except (OSError, ValueError, tk.TclError) as e:
             messagebox.showerror('Настройки', 'Не удалось сохранить настройки: ' + str(e), parent=self.root)
         self.closing = True
@@ -627,12 +624,42 @@ class ScreenWindow:
 
 
 def main(role='local'):
-    os.chdir(Path(sys.executable if getattr(sys, 'frozen', False) else __file__).resolve().parent)
+    managed=ManagedClient.from_environment()
+    os.chdir(managed.directory if managed else Path(sys.executable if getattr(sys, 'frozen', False) else __file__).resolve().parent)
     try:
         ctypes = __import__('ctypes')
         ctypes.windll.shcore.SetProcessDpiAwareness(2)
     except (OSError, AttributeError):
         pass
     root = tk.Tk()
-    ScreenWindow(root, role)
+    app=ScreenWindow(root, role, initial=managed.initial if managed else None)
+    if managed:
+        app.role_combo.configure(state='disabled')
+        def command(name,message):
+            if name=='shutdown': app.close()
+            elif name=='apply':
+                active=bool(app.session and not app.session.stop.is_set())
+                data=validate_settings('screen',message['settings'],role,require_sources=message.get('start',True) or active)
+                changed={key for key,value in data.items() if key in app.vars and app.vars[key].get()!=value}
+                for key,value in data.items():
+                    if key in app.vars and app.vars[key].get()!=value: app.vars[key].set(value)
+                app.role_var.set(ROLES[role])
+                live=set(LIVE_KEYS)|{'preview','fit','zoom','brightness','contrast','saturation','gamma','sharpness','mirror','rotation','topmost'}
+                if (message.get('start',True) and not active) or (active and not changed<=live): app.apply()
+            elif name=='settings':
+                if not app.panel_visible: app.toggle_panel()
+                root.deiconify(); root.lift()
+            elif name=='snapshot': app.shot()
+            elif name=='fullscreen': app.fullscreen()
+            elif name=='region': app.select_region()
+            elif name=='devices': app.refresh_devices()
+        def state():
+            devices={key:list(combo.cget('values')) for key,combo in app.device_combos.items()}
+            active=bool(app.session and app.session.running() and not app.session.stop.is_set())
+            return dict(active=active,role=role,status=app.video_status.get(),audio_status=app.audio_status.get(),
+                        settings=app.snapshot(),devices=devices)
+        managed.attach(root,command,state)
+        app.toggle_panel()
+        if managed.autostart: root.after(100,app.apply)
     root.mainloop()
+    if managed: managed.close()

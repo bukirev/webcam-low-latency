@@ -31,6 +31,8 @@ class CameraRenderTests(unittest.TestCase):
         self.size = [640, 480]
         self.minimized = False
         self.ns = dict(time=time, cv2=__import__('cv2'), lock=threading.Lock(), displayed=None,
+                       CAMERA_DEFAULT=__import__('media_settings').CAMERA_DEFAULT,
+                       media_started=True,
                        latest=np.zeros((480, 640, 3), np.uint8),
                        last_render_frame=None, last_render_key=None, last_placeholder=None,
                        last_status_time=0., minimized=False, MODE='client', info='', actual=0,

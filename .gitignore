@@ -9,3 +9,4 @@ dist/
 *.spec
 release/
 settings_screen_*.json
+settings_dashboard.json

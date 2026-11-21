@@ -30,7 +30,7 @@ with ZipFile(target) as archive:
     if archive.testzip() is not None:
         raise ValueError('ZIP verification failed')
     names = set(archive.namelist())
-    for required in ('WebcamLowLatency.exe', 'START_SCREEN_CLIENT.bat', 'START_SCREEN_SERVER.bat',
+    for required in ('WebcamLowLatency.exe','START.bat','START_CAMERA_CLIENT.bat', 'START_SCREEN_CLIENT.bat', 'START_SCREEN_SERVER.bat',
                      'START_CLIENT.bat', '_internal/python313.dll'):
         if bundle.name + '/' + required not in names:
             raise ValueError('Missing bundle file: ' + required)

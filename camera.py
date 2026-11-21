@@ -1,4 +1,8 @@
 import sys
+if len(sys.argv)==1 or sys.argv[1]=='panel':
+    from dashboard import main
+    main(sys.argv[2] if len(sys.argv)>2 else None)
+    raise SystemExit
 if len(sys.argv)>1 and sys.argv[1]=='screen':
     from screen_window import main
     main(sys.argv[2] if len(sys.argv)>2 else 'local')
@@ -9,15 +13,19 @@ from tkinter import ttk
 from PIL import Image, ImageTk
 from video_display import FramePresenter
 from pathlib import Path
-os.chdir(Path(sys.executable if getattr(sys, 'frozen', False) else __file__).resolve().parent)
+from media_settings import CAMERA_DEFAULT, APP_VERSION, validate_settings, write_json
+from panel_control import ManagedClient, unmanaged_environment
+managed=ManagedClient.from_environment()
+os.chdir(managed.directory if managed else Path(sys.executable if getattr(sys, 'frozen', False) else __file__).resolve().parent)
 MODE=sys.argv[1] if len(sys.argv)>1 else 'local'
 SETTINGS=Path('settings_'+MODE+'.json')
-DEFAULT=dict(host='',quality=80,camera='0',resolution='1280x720',fps='30',codec='MJPG',ratio='Оригинал',fit='Вписать',zoom=1,brightness=0,contrast=1,saturation=1,sharpness=0,gamma=1,rotation='0',mirror=False,flip=False,top=False,autoexp=True,autofocus=True,autowb=True,exposure=-6,focus=0,white=4500)
+DEFAULT=dict(CAMERA_DEFAULT)
 DEFAULT.update(receive_fps='0',decode_scale='1',preview=True)
 if MODE=='client': cv2.setNumThreads(1)
 try: saved=json.loads(SETTINGS.read_text(encoding='utf-8'))
 except Exception: saved={}
-root=tk.Tk(); root.title('Webcam Low Latency 4.1 — '+MODE+''); root.geometry(saved.get('geometry','1200x760'))
+if managed: saved.update(validate_settings('camera',managed.initial,MODE))
+root=tk.Tk(); root.title('Webcam Low Latency '+APP_VERSION+' — '+MODE+''); root.geometry(saved.get('geometry','1200x760'))
 V={}
 for k,v in DEFAULT.items():
     cls=tk.BooleanVar if isinstance(v,bool) else tk.DoubleVar if isinstance(v,(int,float)) else tk.StringVar
@@ -35,8 +43,9 @@ last_render_frame=None; last_render_key=None; last_placeholder=None; last_status
 def snapshot(): return {k:v.get() for k,v in V.items()}
 def update_config(*args):
     global config
+    previous=config
     config=snapshot()
-    root.attributes('-topmost',config['top'])
+    if previous is None or previous['top']!=config['top']: root.attributes('-topmost',config['top'])
 
 def worker():
     global latest,info,actual
@@ -101,10 +110,16 @@ def get_frame():
 def put_frame(frame):
     global latest
     with lock: latest=frame
-if MODE!='client': threading.Thread(target=worker,daemon=True).start()
 if MODE=='server': net=Sender(stop,get_frame,lambda:config)
 if MODE=='client': net=Receiver(stop,lambda:config,put_frame)
-if net: threading.Thread(target=net.run,daemon=True).start()
+media_started=False
+def start_media():
+    global media_started
+    if media_started: return
+    media_started=True
+    if MODE!='client': threading.Thread(target=worker,daemon=True).start()
+    if net: threading.Thread(target=net.run,daemon=True).start()
+if not managed or managed.autostart: start_media()
 def render():
     global displayed,last_render_frame,last_render_key,last_placeholder,last_status_time,minimized,config
     with lock: frame=latest
@@ -114,6 +129,7 @@ def render():
         minimized=root.state()=='iconic'
         text=(f'{frame.shape[1]}×{frame.shape[0]} | '+(net.status if MODE=='client' else f'{actual:.1f} FPS'+info+(' | '+net.status if net else ''))) if frame is not None else (net.status if net else info)
         if status.get()!=text: status.set(text)
+        if not media_started: status.set('Остановлено — запуск из единой панели')
         last_status_time=now
     visible=c['preview'] and not minimized
     if c.get('_receive_visible',True)!=visible:
@@ -170,10 +186,29 @@ def shot():
     if displayed is not None:
         p=Path('snapshots'); p.mkdir(exist_ok=True); target=p/(time.strftime('%Y%m%d_%H%M%S')+f'_{time.time_ns()%1000000}.png'); target.write_bytes(cv2.imencode('.png',displayed)[1].tobytes())
 def close():
-    data=snapshot(); data['geometry']=root.geometry(); SETTINGS.write_text(json.dumps(data,ensure_ascii=False,indent=2),encoding='utf-8'); stop.set(); root.destroy()
+    try:
+        data=snapshot(); data['geometry']=root.geometry(); write_json(SETTINGS,data)
+    finally:
+        stop.set(); root.destroy()
 def open_screen():
     import subprocess
     command=[sys.executable] if getattr(sys,'frozen',False) else [sys.executable,str(Path(__file__).resolve())]
-    subprocess.Popen(command+['screen',MODE])
+    subprocess.Popen(command+['screen',MODE],env=unmanaged_environment())
 for label,fn in [('Экран и звук',open_screen),('Настройки',toggle_panel),('Полный экран',fullscreen),('Снимок',shot)]: ttk.Button(bar,text=label,command=fn).pack(side='right')
+def panel_command(command,message):
+    if command=='shutdown': close()
+    elif command=='apply':
+        data=validate_settings('camera',message['settings'],MODE)
+        for key,value in data.items():
+            if key in V and V[key].get()!=value: V[key].set(value)
+        if message.get('start',True): start_media()
+    elif command=='snapshot': shot()
+    elif command=='fullscreen': fullscreen()
+    elif command=='settings':
+        if hidden: toggle_panel()
+        root.deiconify(); root.lift()
+if managed:
+    managed.attach(root,panel_command,lambda:dict(active=media_started and not stop.is_set(),role=MODE,status=status.get(),settings=snapshot()))
+    toggle_panel()
 root.bind('<F11>',lambda e:fullscreen()); root.bind('<F2>',lambda e:toggle_panel()); root.bind('<F5>',lambda e:shot()); root.bind('<Escape>',lambda e: fullscreen() if full else close()); root.protocol('WM_DELETE_WINDOW',close); render(); root.mainloop()
+if managed: managed.close()
