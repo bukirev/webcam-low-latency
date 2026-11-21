@@ -1,4 +1,8 @@
 import sys
+if len(sys.argv)>1 and sys.argv[1]=='screen':
+    from screen_window import main
+    main(sys.argv[2] if len(sys.argv)>2 else 'local')
+    raise SystemExit
 from network import Sender, Receiver
 import cv2, tkinter as tk, threading, time, json, os
 from tkinter import ttk
@@ -10,7 +14,7 @@ SETTINGS=Path('settings_'+MODE+'.json')
 DEFAULT=dict(host='',quality=80,camera='0',resolution='1280x720',fps='30',codec='MJPG',ratio='Оригинал',fit='Вписать',zoom=1,brightness=0,contrast=1,saturation=1,sharpness=0,gamma=1,rotation='0',mirror=False,flip=False,top=False,autoexp=True,autofocus=True,autowb=True,exposure=-6,focus=0,white=4500)
 try: saved=json.loads(SETTINGS.read_text(encoding='utf-8'))
 except Exception: saved={}
-root=tk.Tk(); root.title('Webcam Low Latency 3.0 — '+MODE+''); root.geometry(saved.get('geometry','1200x760'))
+root=tk.Tk(); root.title('Webcam Low Latency 4.0 — '+MODE+''); root.geometry(saved.get('geometry','1200x760'))
 V={}
 for k,v in DEFAULT.items():
     cls=tk.BooleanVar if isinstance(v,bool) else tk.DoubleVar if isinstance(v,(int,float)) else tk.StringVar
@@ -133,5 +137,9 @@ def shot():
         p=Path('snapshots'); p.mkdir(exist_ok=True); target=p/(time.strftime('%Y%m%d_%H%M%S')+f'_{time.time_ns()%1000000}.png'); target.write_bytes(cv2.imencode('.png',displayed)[1].tobytes())
 def close():
     data=snapshot(); data['geometry']=root.geometry(); SETTINGS.write_text(json.dumps(data,ensure_ascii=False,indent=2),encoding='utf-8'); stop.set(); root.destroy()
-for label,fn in [('Настройки',toggle_panel),('Полный экран',fullscreen),('Снимок',shot)]: ttk.Button(bar,text=label,command=fn).pack(side='right')
+def open_screen():
+    import subprocess
+    command=[sys.executable] if getattr(sys,'frozen',False) else [sys.executable,str(Path(__file__).resolve())]
+    subprocess.Popen(command+['screen',MODE])
+for label,fn in [('Экран и звук',open_screen),('Настройки',toggle_panel),('Полный экран',fullscreen),('Снимок',shot)]: ttk.Button(bar,text=label,command=fn).pack(side='right')
 root.bind('<F11>',lambda e:fullscreen()); root.bind('<F2>',lambda e:toggle_panel()); root.bind('<F5>',lambda e:shot()); root.bind('<Escape>',lambda e: fullscreen() if full else close()); root.protocol('WM_DELETE_WINDOW',close); render(); root.mainloop()
