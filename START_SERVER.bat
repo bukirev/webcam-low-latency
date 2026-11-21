@@ -1,5 +1,9 @@
 @echo off
 cd /d "%~dp0"
+if exist "%~dp0WebcamLowLatency.exe" (
+    "%~dp0WebcamLowLatency.exe" server
+    exit /b
+)
 set "PY=python"
 python --version >nul 2>&1
 if errorlevel 1 set "PY=py -3"

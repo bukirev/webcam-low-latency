@@ -4,6 +4,16 @@
 
 ## Скачать и запустить
 
+### Готовая версия без Python (Windows 10/11, 64 бит)
+
+1. Скачайте [WebcamLowLatency-Windows-x64.zip](https://github.com/bukirev/webcam-low-latency/releases/latest/download/WebcamLowLatency-Windows-x64.zip).
+2. Полностью распакуйте архив в отдельную папку. Сохраните папку `_internal` рядом с `WebcamLowLatency.exe`.
+3. Запустите `START_CLIENT.bat` на принимающем компьютере, `START_SERVER.bat` на компьютере с камерой или `START_LOCAL.bat` для локального просмотра.
+
+Python и установка зависимостей не требуются. Прямой запуск `WebcamLowLatency.exe` открывает локальный просмотр.
+
+### Запуск исходного кода с Python
+
 1. Нажмите **Code → Download ZIP** и распакуйте архив.
 2. Установите Python 3 с поддержкой tkinter. При установке включите **Add Python to PATH**.
 3. Запустите нужный файл:

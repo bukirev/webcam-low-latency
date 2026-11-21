@@ -4,7 +4,7 @@ import cv2, tkinter as tk, threading, time, json, os
 from tkinter import ttk
 from PIL import Image, ImageTk
 from pathlib import Path
-os.chdir(Path(__file__).resolve().parent)
+os.chdir(Path(sys.executable if getattr(sys, 'frozen', False) else __file__).resolve().parent)
 MODE=sys.argv[1] if len(sys.argv)>1 else 'local'
 SETTINGS=Path('settings_'+MODE+'.json')
 DEFAULT=dict(host='',quality=80,camera='0',resolution='1280x720',fps='30',codec='MJPG',ratio='Оригинал',fit='Вписать',zoom=1,brightness=0,contrast=1,saturation=1,sharpness=0,gamma=1,rotation='0',mirror=False,flip=False,top=False,autoexp=True,autofocus=True,autowb=True,exposure=-6,focus=0,white=4500)
