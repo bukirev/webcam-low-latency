@@ -6,7 +6,9 @@ VB2Link передаёт камеру, экран и звук между ком�
 
 **[Скачать VB2Link для Windows x64](https://github.com/bukirev/webcam-low-latency/releases/download/suite-v0.1.0-preview.2/VB2Link-Setup-Windows-x64.exe)** · [Страница релиза](https://github.com/bukirev/webcam-low-latency/releases/tag/suite-v0.1.0-preview.2)
 
-[Установка и обновления](https://github.com/bukirev/webcam-low-latency/blob/suite-v0.1.0-preview.2/docs/webcamgo-updates.md) · [Плагин OBS](https://github.com/bukirev/webcam-low-latency/tree/suite-v0.1.0-preview.2/obs-plugin) · [Ветка VB2Link](https://github.com/bukirev/webcam-low-latency/tree/obs-native)
+[Установка и обновления](https://github.com/bukirev/webcam-low-latency/blob/obs-native/docs/webcamgo-updates.md) · [Плагин OBS](https://github.com/bukirev/webcam-low-latency/tree/obs-native/obs-plugin) · [Документация VB2Link](https://github.com/bukirev/webcam-low-latency/tree/obs-native/docs)
+
+[Журнал выпусков и коммитов](https://github.com/bukirev/webcam-low-latency/blob/obs-native/docs/release-log.md) · [Журнал проверок](https://github.com/bukirev/webcam-low-latency/blob/obs-native/docs/verification-log.md)
 
 ## Предыдущие выпуски Webcam Low Latency
 
