@@ -12,11 +12,14 @@ $env:CGO_ENABLED = '0'
 if ($LASTEXITCODE -ne 0) { throw 'Go tests failed' }
 & $Go run github.com/akavel/rsrc@v0.10.2 -arch amd64 -manifest app.manifest -o app.syso
 if ($LASTEXITCODE -ne 0) { throw 'Manifest generation failed' }
-$bundle = Join-Path $projectRoot 'dist/go-preview/WebcamGo'
+$bundle = Join-Path $projectRoot 'dist/go-obs/WebcamGoOBS'
 New-Item -ItemType Directory -Path $bundle -Force | Out-Null
 & $Go build -trimpath -ldflags '-H=windowsgui -s -w' -o "$bundle/WebcamGo.exe" .
 if ($LASTEXITCODE -ne 0) { throw 'Go build failed' }
 Copy-Item -LiteralPath README.md -Destination "$bundle/README.md"
+Copy-Item -LiteralPath OBS.md -Destination "$bundle/OBS.md"
+$obsCommand = '@echo off' + "`r`n" + 'start "" "%~dp0WebcamGo.exe" obs' + "`r`n"
+[IO.File]::WriteAllText("$bundle/START_OBS.bat", $obsCommand, [Text.Encoding]::ASCII)
 foreach ($role in @('CLIENT', 'SERVER', 'LOCAL')) {
     $command = "@echo off`r`ncd /d `"%~dp0`"`r`nstart `"`" `"%~dp0WebcamGo.exe`" $($role.ToLowerInvariant())`r`n"
     [IO.File]::WriteAllText("$bundle/START_$role.bat", $command, [Text.Encoding]::ASCII)
@@ -41,9 +44,9 @@ $goRoot = & $Go env GOROOT
 Copy-Item -LiteralPath "$goRoot/LICENSE" -Destination "$licenses/Go-LICENSE.txt" -Force
 $inventory | Set-Content -LiteralPath "$licenses/THIRD-PARTY.txt" -Encoding UTF8
 New-Item -ItemType Directory -Path "$projectRoot/release" -Force | Out-Null
-$archive = Join-Path $projectRoot 'release/WebcamGo-Windows-x64.zip'
+$archive = Join-Path $projectRoot 'release/WebcamGo-OBS-Windows-x64.zip'
 # Явный allowlist не допускает попадания профилей, логов и снимков в ZIP.
-$packageFiles = @("$bundle/WebcamGo.exe", "$bundle/README.md", "$bundle/START_CLIENT.bat", "$bundle/START_SERVER.bat", "$bundle/START_LOCAL.bat", $licenses)
+$packageFiles = @("$bundle/WebcamGo.exe", "$bundle/README.md", "$bundle/OBS.md", "$bundle/START_OBS.bat", "$bundle/START_CLIENT.bat", "$bundle/START_SERVER.bat", "$bundle/START_LOCAL.bat", $licenses)
 Compress-Archive -LiteralPath $packageFiles -DestinationPath $archive -Force
 Get-Item -LiteralPath "$bundle/WebcamGo.exe", $archive | Select-Object FullName, Length
 $archiveHash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash

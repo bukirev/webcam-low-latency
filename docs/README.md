@@ -45,6 +45,8 @@
 
 ## Другие разделы
 
+- [Вывод камеры, экрана и звука в OBS](modules/obs.md).
+
 - [Python 4.3: каждый модуль и соответствие Go](legacy-python.md).
 - [Контракт UDP на уровне байтов](protocols.md).
 - [Каталог всех параметров](settings-reference.md).

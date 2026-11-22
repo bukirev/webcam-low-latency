@@ -1,4 +1,6 @@
-# Webcam Go 5.0 — preview 2
+# Webcam Go 5.0 — OBS preview 1
+
+На ветке OBS используйте `START_OBS.bat` для передачи принятых камеры, экрана и звука прямо в OBS. [Инструкция](https://github.com/bukirev/webcam-low-latency/blob/obs-teleport/go-version/OBS.md).
 
 Разработчикам: [модули и архитектура](https://github.com/bukirev/webcam-low-latency/blob/main/docs/README.md),
 [инструкции для агентов](https://github.com/bukirev/webcam-low-latency/blob/main/AGENTS.md),
@@ -13,8 +15,7 @@
 системный звук и микрофон по локальной сети. Один `WebcamGo.exe`, без Python,
 OpenCV, FFmpeg, установки Go и папки `_internal`.
 
-Это первая предварительная Go-сборка. Стабильная Python-версия 4.3 остаётся
-доступна отдельно. Распакуйте Go-сборку в новую папку.
+Распакуйте эту предварительную Go-сборку в отдельную папку.
 
 ## Запуск
 
@@ -107,7 +108,7 @@ powershell -ExecutionPolicy Bypass -File .\go-version\build.ps1
 
 Скрипт запускает тесты, добавляет manifest через закреплённую версию `rsrc`, собирает
 EXE с `CGO_ENABLED=0`, добавляет лицензии зависимостей и создаёт
-`release/WebcamGo-Windows-x64.zip`. C/C++-компилятор не нужен.
+`release/WebcamGo-OBS-Windows-x64.zip`. C/C++-компилятор не нужен.
 Проверка Windows API: `WebcamGo.exe --self-test`, результат — `go-self-test.json`
 рядом с EXE. Она кратковременно включает камеру, захват экрана и микрофон, проверяет
 WIC, Direct3D и WASAPI; изображения и записи звука на диск не сохраняет.

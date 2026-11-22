@@ -65,6 +65,13 @@ func main() {
 	executableDirectory()
 	stopDiagnostics := startDiagnostics()
 	defer stopDiagnostics()
+	if len(os.Args) > 1 && os.Args[1] == "obs" {
+		if err := runOBSPanel(); err != nil {
+			log.Printf("OBS PANEL ERROR: %v", err)
+			walk.MsgBox(nil, "WebcamGo OBS", err.Error(), walk.MsgBoxIconError)
+		}
+		return
+	}
 	if len(os.Args) > 1 && strings.HasPrefix(os.Args[1], "--self-test") {
 		if e := selfTest(); e != nil {
 			fmt.Fprintln(os.Stderr, e)

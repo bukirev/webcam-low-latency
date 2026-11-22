@@ -12,7 +12,7 @@ import (
 	"sync/atomic"
 )
 
-const version = "5.0 Go preview 2"
+const version = "5.0 OBS preview 1"
 
 //go:embed settings_schema.json
 var schemaFS embed.FS
