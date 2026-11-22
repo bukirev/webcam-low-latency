@@ -12,6 +12,9 @@ import (
 	"github.com/lxn/win"
 )
 
+// screenBitmap делает единственный снимок для диалога, а не видеозахват.
+// Возвращаемый walk.Bitmap принадлежит вызывающему; временные GDI handles
+// освобождаются после копирования. На диск снимок монитора не записывается.
 func screenBitmap(r CaptureRect) (*walk.Bitmap, error) {
 	desktop := win.GetDC(0)
 	defer win.ReleaseDC(0, desktop)
@@ -37,6 +40,9 @@ func screenBitmap(r CaptureRect) (*walk.Bitmap, error) {
 	return walk.NewBitmapFromImage(img)
 }
 
+// selectRegion работает на UI thread и изменяет только draft после подтверждения.
+// MouseEvent даёт физические пиксели canvas; shown учитывает вписывание снимка.
+// Итог масштабируется в физические координаты монитора, включая отрицательные X/Y.
 func (a *Application) selectRegion() {
 	draft := a.draft()
 	v := draft.Screen.Clone()

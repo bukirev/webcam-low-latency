@@ -14,6 +14,9 @@ import (
 
 // Runs diagnostic work only when explicitly requested with --self-test. No
 // microphone or camera contents are written to disk or uploaded.
+// selfTest — явная аппаратная диагностика с кратковременным доступом к устройствам.
+// Некоторые недоступные устройства записываются как *_error без ненулевого exit:
+// потребитель отчёта обязан проверять JSON, а не только код завершения.
 func selfTest() error {
 
 	report := map[string]any{"version": version, "checks": map[string]any{}}
@@ -239,6 +242,8 @@ func selfTest() error {
 	return nil
 }
 
+// gpuSelfTest проверяет минимальный путь D3D без запуска захвата.
+// Он не заменяет проверку decoder, потери device и длительную передачу.
 func gpuSelfTest() error {
 	view, e := newViewer("camera", newStore(defaultConfig("client")), nil)
 	if e != nil {

@@ -1,3 +1,6 @@
+# Совместимый с Go UDP video protocol: заголовок 20 байт big-endian и JPEG-фрагменты.
+# Свежий кадр важнее очереди старых: receiver продолжает draining и при лимите FPS.
+# Wire format и ограничения: docs/protocols.md; перенос: docs/modules/protocol.md.
 import socket, struct, time, threading, secrets
 import cv2
 import numpy as np
@@ -10,6 +13,8 @@ def decode_jpeg(data, scale=1):
     flags={1:cv2.IMREAD_COLOR,2:cv2.IMREAD_REDUCED_COLOR_2,4:cv2.IMREAD_REDUCED_COLOR_4}
     return cv2.imdecode(np.frombuffer(data,np.uint8),flags.get(int(scale),cv2.IMREAD_COLOR))
 
+# Пакетный формат совпадает с Go. JPEG уже готов; frame slicing не должно
+# менять endian/header и границы частей 1300 bytes без новой версии протокола.
 def send_frame(sock, addr, session, seq, data, magic=b'WC30'):
     n=(len(data)+CHUNK-1)//CHUNK
     if n>4096: return 0
@@ -19,6 +24,8 @@ def send_frame(sock, addr, session, seq, data, magic=b'WC30'):
         total+=sock.sendto(packet,addr)
     return total
 
+# В Python producer даёт BGR frame; sender кодирует его JPEG один раз на новый
+# объект кадра, затем рассылает всем подписчикам. Go raw MJPG path устроен иначе.
 class Sender:
     def __init__(self, stop, get_frame, get_config, *, port=DISC, magic=b'WC30'):
         self.port=port; self.magic=magic
@@ -50,6 +57,8 @@ class Sender:
                     self.status=f'UDP: {len(self.clients)} клиентов | {rate:.1f} Мбит/с'; self.stop.wait(.002)
         except OSError as e: self.status=f'Ошибка сети: {e}'
 
+# Собирать неполные JPEG нужно ограниченно, а декодировать только свежий полный.
+# Лимит FPS не должен останавливать draining socket и накапливать старые кадры.
 class Receiver:
     def __init__(self,stop,get_config,on_frame, *, port=DISC, magic=b'WC30'):
         self.port=port; self.magic=magic

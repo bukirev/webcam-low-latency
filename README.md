@@ -1,5 +1,9 @@
 # Webcam Low Latency 4.3
 
+**Для разработчиков и агентов:** [подробная документация всех модулей](docs/README.md),
+[архитектура](docs/architecture.md), [разобранные ошибки и опыт](docs/lessons-learned.md),
+[перенос решений в другие проекты](docs/porting-guide.md).
+
 **Новая Go-версия 5.0 preview 2:** [скачать WebcamGo-Windows-x64.zip](https://github.com/bukirev/webcam-low-latency/releases/download/v5.0.0-go.2/WebcamGo-Windows-x64.zip).
 Исправлен вылет сервера через несколько минут при передаче экрана.
 Один нативный EXE для Windows x64, Direct3D, Media Foundation и WASAPI, совместимые

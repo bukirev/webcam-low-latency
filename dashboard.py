@@ -1,3 +1,6 @@
+# Единая панель Python: UI/draft остаются здесь, кадры и звук — в дочерних процессах.
+# Применение настроек идёт через panel_control, а не через медиапротокол UDP.
+# Подробности: docs/legacy-python.md и docs/modules/application.md.
 """A lightweight Tk control panel; media stay in independently managed processes."""
 import os
 from pathlib import Path
@@ -10,6 +13,8 @@ from media_settings import (APP_VERSION, ROLES, DEFAULTS, CAMERA_FIELDS, SCREEN_
 from panel_control import ManagedProcess
 
 
+# Панель владеет draft и созданными ManagedProcess. Через неё проходят команды
+# и состояния, но не большие media buffers; Tk остаётся на основном потоке.
 class Dashboard:
     def __init__(self, root, role=None):
         self.root = root

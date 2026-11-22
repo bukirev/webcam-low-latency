@@ -1,3 +1,6 @@
+# Python-окно экрана/звука: ScreenSession владеет workers и остановкой; UI отдельно
+# хранит черновик и кэш обработанного кадра. Управляемый режим подчиняется панели.
+# Подробности: docs/legacy-python.md; сравнение вывода: docs/modules/render.md.
 """Independent screen/audio window. No capture starts until the user presses Start."""
 import json
 import os
@@ -72,6 +75,8 @@ def validate_config(config):
     return c
 
 
+# Один сеанс владеет своим stop event, workers и frame. Изменения, требующие
+# другого backend/device, проходят остановку и создание нового Session.
 class ScreenSession:
     def __init__(self, config):
         if config['role']=='client': cv2.setNumThreads(1)
@@ -116,6 +121,8 @@ class ScreenSession:
         return any(t.is_alive() for t in self.threads)
 
 
+# Обработка относится к локальному виду и не должна менять опубликованный
+# source frame для сетевого sender. Render кеширует итог по frame/config/size.
 def processed_preview(frame, config, width, height):
     f = frame
     rotation = int(config['rotation'])
@@ -157,6 +164,8 @@ def processed_preview(frame, config, width, height):
     return f
 
 
+# В controlled mode источником применённых параметров служит Dashboard.
+# Не добавляйте вторую независимо действующую кнопку Apply в managed preview.
 class ScreenWindow:
     def __init__(self, root, role, initial=None, controlled=False):
         self.root = root

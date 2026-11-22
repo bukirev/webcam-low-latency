@@ -1,3 +1,6 @@
+# Python WASAPI через PyAudioWPatch: отдельные источники, bounded PCM buffer и WA40.
+# Frames и отдельные сэмплы различаются числом channels. Не применять mailbox видео
+# к последовательному PCM. Подробнее: docs/modules/audio-core.md, docs/legacy-python.md.
 """Small, bounded PCM packets over LAN. Capture and playback use WASAPI.
 
 There is deliberately no reliable delivery or growing playback queue: late audio
@@ -23,6 +26,8 @@ MAX_PAYLOAD = 1200
 _PA_LOCK = threading.RLock()
 
 
+# Lifecycle PortAudio сериализован отдельно от PCM callbacks. Держать этот
+# lock в real-time callback или ждать GUI из него нельзя.
 def serialized_portaudio(function):
     @wraps(function)
     def call(*args, **kwargs):
@@ -88,6 +93,8 @@ def change_channels(data, channels):
     return data[:, :2]
 
 
+# Дробная фаза и последний frame сохраняются между блоками; пересоздание
+# resampler на каждом block искажает суммарную длительность.
 class Resampler:
     """Continuous linear resampling without rounding a duration per callback."""
     def __init__(self, source_rate, target_rate, channels):
@@ -115,6 +122,8 @@ class Resampler:
         return result
 
 
+# Capacity и pull выражены frames, в отличие от Go FloatRing с отдельными samples.
+# При переносе умножение на channels должно происходить ровно один раз.
 class PCMBuffer:
     """A bounded FIFO shared by the audio and network callbacks."""
     def __init__(self, channels, max_frames):
@@ -231,6 +240,8 @@ class CaptureSource:
         self.stream.close()
 
 
+# Системный звук и микрофон независимы по устройствам/часам. Перед mix оба
+# источника приводятся к общим rate/channels; отсутствие данных означает тишину.
 class AudioSender:
     def __init__(self, stop, get_config):
         self.stop = stop

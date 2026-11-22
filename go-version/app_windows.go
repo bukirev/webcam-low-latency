@@ -16,12 +16,17 @@ import (
 	. "github.com/lxn/walk/declarative"
 )
 
+// Session объединяет отмену и состояния одного окна/потока. active означает
+// запущенный сеанс, а не подтверждение исправности драйвера или доставки пакетов.
 type Session struct {
 	cancel                 context.CancelFunc
 	active                 atomic.Bool
 	view                   *Viewer
 	status, audio, network *Status
 }
+
+// Application владеет Walk-виджетами, sessions и черновиками только на UI thread.
+// Рабочие горутины читают ConfigStore и Status, не карты виджетов/форм напрямую.
 type Application struct {
 	window                     *walk.MainWindow
 	tabs                       *walk.TabWidget
@@ -40,6 +45,8 @@ type Application struct {
 
 var roleIDs = []string{"client", "server", "local"}
 
+// Постоянный timer callback не захватывает конкретную панель навсегда.
+// Связь HWND → Application удаляется при Dispose, включая диагностические окна.
 var panelTimers sync.Map
 var panelTimerCallback = syscall.NewCallback(updatePanelTimer)
 
@@ -50,6 +57,8 @@ func updatePanelTimer(hwnd, msg, id, stamp uintptr) uintptr {
 	return 0
 }
 
+// main закрепляет UI за OS thread до создания Walk/COM-окон.
+// --autostart использует сохранённый профиль; обычный запуск не начинает захват.
 func main() {
 
 	runtime.LockOSThread()
@@ -170,6 +179,10 @@ func (a *Application) refreshDevices() {
 	a.devices["monitor"] = ds
 	a.devices["window"] = windowDevices()
 }
+
+// forms перестраивает вкладки одной операцией с приостановленной layout.
+// Иначе Walk может вычислить layout при уже удалённых pages и старом currentIndex.
+// building подавляет обработчики, вызываемые программной установкой полей.
 func (a *Application) forms(c Config) error {
 	selectedTab := a.tabs.CurrentIndex()
 	wasSuspended := a.window.Suspended()
@@ -326,6 +339,9 @@ func (a *Application) fieldWidget(kind, key, label string, options any, v Values
 	}
 	return Composite{Layout: Grid{Columns: 2}, Children: []Widget{Label{Text: label, MinSize: Size{260, 0}}, input}}, getter
 }
+
+// draft читает widgets на UI thread и копирует применённые карты.
+// Просмотр draft и выбор пресета не должны менять конфигурацию работающих workers.
 func (a *Application) draft() Config {
 	c := a.store.Get()
 	c.Camera = c.Camera.Clone()
@@ -342,6 +358,10 @@ func (a *Application) draft() Config {
 	}
 	return c
 }
+
+// apply сначала валидирует и сохраняет draft, затем публикует снимок.
+// Параметры вида обновляются без рестарта, host/форматы/устройства требуют
+// отмены прежнего сеанса. Это не транзакция с подтверждением от всех драйверов.
 func (a *Application) apply() {
 	next := a.draft()
 	if e := validate(next); e != nil {
@@ -379,6 +399,9 @@ func (a *Application) apply() {
 	a.error(a.forms(next))
 	a.message.SetText("Параметры применены.")
 }
+
+// economy меняет поля формы (20 FPS, decode /2), не store. Единственная точка
+// вступления параметров в силу остаётся кнопка «Применить».
 func (a *Application) economy() {
 	c := a.draft()
 	for _, v := range []Values{c.Camera, c.Screen} {
@@ -409,6 +432,10 @@ func (a *Application) changeRole() {
 	a.error(a.forms(c))
 	a.message.SetText("Режим изменён. Настройте параметры и нажмите «Применить».")
 }
+
+// start создаёт независимый context для камеры либо экрана/звука. Повторный
+// старт активного сеанса только поднимает окно и не применяет незавершённый draft.
+// Один процесс Go содержит несколько горутин; это не изоляция сбоев процессов.
 func (a *Application) start(kind string) {
 	log.Printf("START STREAM kind=%s role=%s", kind, a.store.Get().Role)
 	if s := a.sessions[kind]; s != nil && s.active.Load() {
@@ -488,6 +515,10 @@ func (a *Application) start(kind string) {
 	}
 	a.message.SetText("Поток запущен. Изменения параметров передаются только кнопкой «Применить».")
 }
+
+// stop сигнализирует отмену и закрывает вид, не блокируя UI ожиданием драйвера.
+// При немедленном restart старый worker может ещё освобождать устройство, поэтому
+// источник запускается через retryMedia. Синхронный ReadSample может задержать выход.
 func (a *Application) stop(kind string) {
 	log.Printf("STOP STREAM kind=%s", kind)
 	if s := a.sessions[kind]; s != nil {

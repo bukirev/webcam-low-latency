@@ -1,3 +1,4 @@
+# Сборка и упаковка без Cgo; контракты артефактов: docs/modules/build.md.
 param([string]$Go = 'go')
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
@@ -5,6 +6,7 @@ Set-Location -LiteralPath $PSScriptRoot
 if ($Go -eq 'go' -and (Test-Path -LiteralPath "$projectRoot/.tools/go/bin/go.exe")) {
     $Go = "$projectRoot/.tools/go/bin/go.exe"
 }
+# Только Go и системные DLL Windows; язык Go не требуется на целевом ПК.
 $env:CGO_ENABLED = '0'
 & $Go test -count=1 ./...
 if ($LASTEXITCODE -ne 0) { throw 'Go tests failed' }
@@ -40,6 +42,7 @@ Copy-Item -LiteralPath "$goRoot/LICENSE" -Destination "$licenses/Go-LICENSE.txt"
 $inventory | Set-Content -LiteralPath "$licenses/THIRD-PARTY.txt" -Encoding UTF8
 New-Item -ItemType Directory -Path "$projectRoot/release" -Force | Out-Null
 $archive = Join-Path $projectRoot 'release/WebcamGo-Windows-x64.zip'
+# Явный allowlist не допускает попадания профилей, логов и снимков в ZIP.
 $packageFiles = @("$bundle/WebcamGo.exe", "$bundle/README.md", "$bundle/START_CLIENT.bat", "$bundle/START_SERVER.bat", "$bundle/START_LOCAL.bat", $licenses)
 Compress-Archive -LiteralPath $packageFiles -DestinationPath $archive -Force
 Get-Item -LiteralPath "$bundle/WebcamGo.exe", $archive | Select-Object FullName, Length

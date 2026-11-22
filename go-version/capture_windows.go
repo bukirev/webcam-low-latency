@@ -29,6 +29,8 @@ var mjpgGUID = guid("{47504a4d-0000-0010-8000-00aa00389b71}")
 
 type NamedDevice struct{ ID, Name string }
 
+// mfStart добавляет к COM-потоку время жизни Media Foundation. defer done
+// должен выполняться после освобождения reader/source и прочих MF-объектов.
 func mfStart() (func(), error) {
 	done, e := comThread()
 	if e != nil {
@@ -41,6 +43,9 @@ func mfStart() (func(), error) {
 	}
 	return func() { invoke(mf.NewProc("MFShutdown")); done() }, nil
 }
+
+// mfDevices возвращает ссылки IMFActivate, которыми владеет вызывающий код.
+// Массив указателей освобождается CoTaskMemFree отдельно от Release каждого элемента.
 func mfDevices() ([]uintptr, error) {
 	var attrs uintptr
 	r, _, _ := invoke(mf.NewProc("MFCreateAttributes"), ptr(&attrs), 1)
@@ -64,6 +69,9 @@ func mfDevices() ([]uintptr, error) {
 	result := append([]uintptr(nil), unsafe.Slice((*uintptr)(unsafe.Pointer(array)), int(count))...)
 	return result, nil
 }
+
+// cameraDevices перечисляет названия без запуска видеозахвата. Индекс — текущий
+// порядок MF, а не стабильный идентификатор USB-камеры после переподключения.
 func cameraDevices() ([]NamedDevice, error) {
 	done, e := mfStart()
 	if e != nil {
@@ -90,6 +98,9 @@ func cameraDevices() ([]NamedDevice, error) {
 	return result, nil
 }
 
+// captureCamera создаёт MF reader на собственном COM-потоке и выбирает ближайший
+// нативный режим с предпочтением codec. В MJPG передаёт копию JPEG, иначе просит
+// RGB32 и кодирует WIC. ReadSample синхронный: context проверяется между чтениями.
 func captureCamera(ctx context.Context, store *ConfigStore, publish func([]byte), status *Status) {
 	done, e := mfStart()
 	if e != nil {
@@ -272,6 +283,10 @@ func captureCamera(ctx context.Context, store *ConfigStore, publish func([]byte)
 	}
 	_, _ = com(reader, 10, stream)
 }
+
+// applyCameraControls пробует старые интерфейсы управления как best effort.
+// MF source может их не предоставлять; ошибки не означают применённую настройку.
+// Поэтому аппаратная группа в Go-панели скрыта.
 func applyCameraControls(source uintptr, c Values) {
 	if camera, e := query(source, guid("{c6e13370-30ac-11d0-a18c-00a0c9118956}")); e == nil {
 		defer release(camera)
@@ -297,6 +312,8 @@ func applyCameraControls(source uintptr, c Values) {
 	}
 }
 
+// CaptureRect использует физические пиксели виртуального рабочего стола.
+// X/Y могут быть отрицательными для монитора левее/выше основного.
 type CaptureRect struct {
 	X, Y, W, H int
 	Name       string
@@ -316,6 +333,8 @@ var enumerationID atomic.Uint64
 var monitorCallback = syscall.NewCallback(collectMonitor)
 var windowCallback = syscall.NewCallback(collectWindow)
 
+// collectMonitor — постоянный native entry point. param — ID в Go registry,
+// а rc — заимствованный RECT Windows, доступный только во время callback.
 func collectMonitor(h, dc, rc, param uintptr) uintptr {
 	if state, ok := enumerationRequests.Load(param); ok {
 		result := state.(*enumerationResult)
@@ -342,6 +361,9 @@ func collectWindow(h, param uintptr) uintptr {
 	return 1
 }
 
+// monitors регистрирует только короткоживущий контекст результата.
+// Go удерживает регистрации callback до конца процесса, поэтому в покадровом
+// пути переиспользуется постоянный monitorCallback вместо нового NewCallback.
 func monitors() []CaptureRect {
 	result := &enumerationResult{}
 	id := uintptr(enumerationID.Add(1))
@@ -351,6 +373,8 @@ func monitors() []CaptureRect {
 	return result.monitors
 }
 
+// windowDevices использует тот же принцип постоянного callback и отдельного ID.
+// HWND живёт только пока существует окно; сохранённое число нужно перепроверять.
 func windowDevices() []NamedDevice {
 	result := &enumerationResult{}
 	id := uintptr(enumerationID.Add(1))
@@ -359,6 +383,9 @@ func windowDevices() []NamedDevice {
 	invoke(syscall.NewLazyDLL("user32.dll").NewProc("EnumWindows"), windowCallback, id)
 	return result.windows
 }
+
+// screenRect разрешает выбранный источник в текущие координаты рабочего стола.
+// Захват окна означает видимые пиксели его прямоугольника, включая перекрытия.
 func screenRect(c Values) (CaptureRect, error) {
 	ms := monitors()
 	if len(ms) == 0 {
@@ -392,6 +419,10 @@ func screenRect(c Values) (CaptureRect, error) {
 	}
 	return r, nil
 }
+
+// captureScreen владеет desktop DC, совместимым DC и top-down DIB.
+// DIB пересоздаётся только при изменении размеров; перед DeleteObject старый bitmap
+// обязательно выводится из DC. Каждая итерация кодирует JPEG и учитывает время работы.
 func captureScreen(ctx context.Context, store *ConfigStore, publish func([]byte), status *Status) {
 	done, e := comThread()
 	if e != nil {
@@ -493,6 +524,9 @@ func captureScreen(ctx context.Context, store *ConfigStore, publish func([]byte)
 	}
 	runtime.KeepAlive(bits)
 }
+
+// drawCursor переводит экранную позицию курсора в координаты области с hotspot.
+// GetIconInfo создаёт bitmap handles, которые нужно DeleteObject после рисования.
 func drawCursor(dc win.HDC, r CaptureRect) {
 	var ci struct {
 		CbSize, Flags uint32

@@ -1,8 +1,13 @@
+# Переиспользование PhotoImage для Python/Tk: show вызывается при новом изображении,
+# а не на каждом poll UI. Это снижает стоимость выделений, но остаётся CPU/Tk-путём.
+# Сравнение с GPU: docs/modules/render.md и docs/lessons-learned.md.
 """Reuse Tk image storage instead of allocating a new photo for every frame."""
 import cv2
 from PIL import Image, ImageTk
 
 
+# Только Tk UI thread. Двойной PhotoImage cache позволяет paste в непоказанную
+# картинку, затем переключить widget, сохранив ссылку от сборки мусора.
 class FramePresenter:
     def __init__(self, widget):
         self.widget = widget

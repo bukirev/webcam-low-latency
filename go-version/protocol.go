@@ -12,12 +12,20 @@ import (
 	"time"
 )
 
+// Размеры — часть совместимого протокола, а не параметры GUI.
+// Заголовок network byte order занимает 20 байт, полезная часть — до 1300.
 const chunkSize = 1300
 const videoHeader = 20
 
+// Latest — неблокирующий почтовый ящик последнего видеокадра ёмкостью один.
+// Переполнение выбрасывает старое значение. Put передаёт неизменяемый []byte;
+// освобождение внешних ресурсов при вытеснении контейнер не выполняет.
 type Latest[T any] struct{ ch chan T }
 
 func newLatest[T any]() *Latest[T] { return &Latest[T]{make(chan T, 1)} }
+
+// Put не ждёт потребителя и не закрывает канал. Сеанс завершается через context.
+// Это политика свежести видео; для последовательных аудиосэмплов нужен FIFO.
 func (l *Latest[T]) Put(v T) {
 	select {
 	case l.ch <- v:
@@ -34,6 +42,7 @@ func (l *Latest[T]) Put(v T) {
 	}
 }
 
+// Status переносит короткое состояние из рабочих горутин в GUI под mutex.
 type Status struct {
 	mu   sync.Mutex
 	text string
@@ -41,8 +50,14 @@ type Status struct {
 
 func (s *Status) Set(t string) { s.mu.Lock(); s.text = t; s.mu.Unlock() }
 func (s *Status) Get() string  { s.mu.Lock(); defer s.mu.Unlock(); return s.text }
-func newer(a, b uint32) bool   { return a != b && uint32(a-b) < 0x80000000 }
-func sessionID() uint64        { var b [8]byte; _, _ = rand.Read(b[:]); return binary.BigEndian.Uint64(b[:]) }
+
+// newer сравнивает uint32 по модулю 2^32, включая переход maxUint32 → 0.
+// Разность в половину диапазона и больше считается старой/неоднозначной.
+func newer(a, b uint32) bool { return a != b && uint32(a-b) < 0x80000000 }
+func sessionID() uint64      { var b [8]byte; _, _ = rand.Read(b[:]); return binary.BigEndian.Uint64(b[:]) }
+
+// fragments вызывает send синхронно: packet переиспользуется для всех фрагментов.
+// Если send сохраняет срез для отложенной отправки, он обязан скопировать байты.
 func fragments(magic string, session uint64, seq uint32, data []byte, send func([]byte) error) error {
 	n := (len(data) + chunkSize - 1) / chunkSize
 	if n == 0 || n > 4096 {
@@ -69,6 +84,9 @@ type partialFrame struct {
 	parts      [][]byte
 	have, size int
 }
+
+// Assembler собирает один источник/сеанс; переключение сеанса делает receiver.
+// Объект принадлежит одной горутине, имеет предел частичных кадров и срок жизни.
 type Assembler struct {
 	magic   string
 	frames  map[uint32]*partialFrame
@@ -79,6 +97,10 @@ type Assembler struct {
 func newAssembler(magic string) *Assembler {
 	return &Assembler{magic: magic, frames: map[uint32]*partialFrame{}}
 }
+
+// Push валидирует пакет до выделения частей, игнорирует повторы и старые seq.
+// Завершённый JPEG — новый независимый срез. Просрочка очищается на следующих
+// пакетах; накопления истории для последующего воспроизведения здесь нет.
 func (a *Assembler) Push(p []byte, now time.Time) ([]byte, uint32) {
 	if len(p) <= 20 || len(p) > 20+chunkSize || string(p[:4]) != a.magic {
 		return nil, 0
@@ -141,6 +163,10 @@ func receiveVideo(ctx context.Context, magic string, port int, host string, out 
 		}
 	}
 }
+
+// receiveVideoOnce подписывается с эфемерного UDP-порта и закрепляет IP/session
+// первого подходящего источника. При таймауте очистка публикует nil в decoder.
+// ReadDeadline и закрытие сокета по context ограничивают ожидание остановки.
 func receiveVideoOnce(ctx context.Context, magic string, port int, host string, out *Latest[[]byte], status *Status) error {
 	conn, e := net.ListenUDP("udp4", &net.UDPAddr{})
 	if e != nil {
@@ -228,6 +254,8 @@ func receiveVideoOnce(ctx context.Context, magic string, port int, host string, 
 	return ctx.Err()
 }
 
+// VideoSender отделяет захват от UDP-отправки почтовым ящиком. clients — sync.Map,
+// потому что чтение SUB и отправка кадров выполняются в разных горутинах.
 type VideoSender struct {
 	input   *Latest[[]byte]
 	status  *Status
@@ -238,6 +266,10 @@ type VideoSender struct {
 func newVideoSender(status *Status) *VideoSender {
 	return &VideoSender{input: newLatest[[]byte](), status: status, session: sessionID()}
 }
+
+// Run владеет сокетом и seq; записи подписчиков обновляет отдельный reader.
+// Клиент живёт 5 секунд после SUB, отправка ограничена deadline. UDP-подписка
+// не является аутентификацией; не используйте этот протокол как публичный сервис.
 func (s *VideoSender) Run(ctx context.Context, magic string, port int) {
 	conn, e := net.ListenUDP("udp4", &net.UDPAddr{Port: port})
 	if e != nil {

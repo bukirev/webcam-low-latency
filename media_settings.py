@@ -1,3 +1,6 @@
+# Общая схема и валидация Python 4.3. Go использует отдельный встраиваемый JSON-снимок
+# схемы: изменения в этом файле не синхронизируются туда автоматически.
+# Каталог параметров: docs/settings-reference.md; перенос: docs/legacy-python.md.
 """Settings shared by the lightweight control panel and the media processes."""
 import json
 import math
@@ -106,6 +109,8 @@ CLIENT_KEYS = {
 }
 
 
+# Фильтр роли — часть пользовательского контракта: скрытые source settings
+# сохраняются в профиле, но не должны мешать применению параметров client.
 def visible_fields(fields, kind, role):
     result = []
     for group,key,label,choices in fields:
@@ -162,6 +167,8 @@ def load_settings(kind, role):
     return result
 
 
+# Возвращает нормализованную копию; не редактирует widgets или рабочий snapshot.
+# require_sources позволяет проверять профиль отдельно от фактического запуска.
 def validate_settings(kind, values, role, *, require_sources=True):
     if role not in ROLES or kind not in DEFAULTS:
         raise ValueError('Неизвестный режим')

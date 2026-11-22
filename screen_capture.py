@@ -1,3 +1,6 @@
+# Python-захват видимых пикселей через mss, с отдельным рисованием курсора.
+# Область задана физическими координатами виртуального рабочего стола, X/Y могут
+# быть отрицательными. Контракты перенесены в Go: docs/modules/screen-capture.md.
 """Desktop capture is independent of camera capture and its settings."""
 import ctypes
 from ctypes import wintypes
@@ -61,6 +64,8 @@ def capture_region(config, monitors):
     return dict(left=left, top=top, width=right - left, height=bottom - top)
 
 
+# Владелец GDI-ресурсов курсора. Native handles освобождаются close независимо
+# от существования Python-объекта; hotspot участвует в смещении рисунка.
 class CursorPainter:
     """Draw the actual Windows cursor, including hotspot, into a small GDI patch."""
     class CURSORINFO(ctypes.Structure):
@@ -146,6 +151,8 @@ class CursorPainter:
             self.gdi.DeleteDC(self.dc)
 
 
+# mss session и CursorPainter живут внутри worker. Новые BGR arrays публикуются
+# как кадры для чтения; stop.wait позволяет отменить FPS delay без блокировки Tk.
 class ScreenCapture:
     def __init__(self, stop, get_config, publish):
         self.stop = stop

@@ -7,6 +7,8 @@ import (
 	"sync"
 )
 
+// AudioPacket содержит межканальные float32-сэмплы после разбора PCM16.
+// Frames — число временных отсчётов, len(Samples) == Frames*Channels.
 type AudioPacket struct {
 	Session                uint64
 	Seq                    uint32
@@ -14,6 +16,8 @@ type AudioPacket struct {
 	Samples                []float32
 }
 
+// parseAudio проверяет полный размер и допустимый формат до чтения PCM.
+// Заголовок big-endian, сэмплы little-endian: единый endian для всего пакета неверен.
 func parseAudio(p []byte) (AudioPacket, error) {
 	a := AudioPacket{}
 	if len(p) <= 23 || len(p) > 1223 || string(p[:4]) != "WA40" {
@@ -33,6 +37,9 @@ func parseAudio(p []byte) (AudioPacket, error) {
 	}
 	return a, nil
 }
+
+// pcmPackets ограничивает payload 1200 байт и режет только по границам frames.
+// Клиппинг до 32767/32768 предотвращает переполнение положительного int16.
 func pcmPackets(samples []float32, rate, channels int, session uint64, seq *uint32, send func([]byte)) {
 	maxSamples := 1200 / 2
 	maxSamples -= maxSamples % channels
@@ -55,6 +62,9 @@ func pcmPackets(samples []float32, rate, channels int, session uint64, seq *uint
 	}
 }
 
+// FloatRing хранит отдельные float32-сэмплы, не кадры и не миллисекунды.
+// При переполнении удаляются старейшие сэмплы; capacity рассчитывают с channels.
+// Методы защищены mutex, но пакетное выравнивание задаётся вызывающим кодом.
 type FloatRing struct {
 	mu         sync.Mutex
 	data       []float32
@@ -75,6 +85,9 @@ func (r *FloatRing) Push(samples []float32) {
 	}
 }
 func (r *FloatRing) Len() int { r.mu.Lock(); defer r.mu.Unlock(); return r.size }
+
+// Pop возвращает ровно n сэмплов, дополняя нехватку нулями; count — реальные данные.
+// minimum задаёт предварительное накопление, keep отбрасывает чрезмерное отставание.
 func (r *FloatRing) Pop(n, minimum, keep int) ([]float32, int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -96,6 +109,9 @@ func (r *FloatRing) Pop(n, minimum, keep int) ([]float32, int) {
 	return out, count
 }
 
+// Resampler сохраняет дробную позицию и граничные сэмплы между блоками.
+// Он принадлежит одному потоку обработки; это линейная интерполяция, без
+// полноценного антиалиас-фильтра и адаптации к дрейфу независимых часов устройств.
 type Resampler struct {
 	from, to, channels int
 	position           float64
@@ -105,6 +121,9 @@ type Resampler struct {
 func newResampler(from, to, channels int) *Resampler {
 	return &Resampler{from: from, to: to, channels: channels}
 }
+
+// Process сначала меняет число каналов, затем частоту. Последний исходный frame
+// может остаться pending, чтобы следующий блок продолжил интерполяцию без разрыва.
 func (r *Resampler) Process(input []float32, sourceChannels int) []float32 {
 	frames := len(input) / sourceChannels
 	converted := make([]float32, frames*r.channels)
@@ -144,6 +163,9 @@ func (r *Resampler) Process(input []float32, sourceChannels int) []float32 {
 	r.position -= float64(drop)
 	return out
 }
+
+// decodeNative читает устройство в его нативном формате и нормализует амплитуду.
+// Нельзя считать, что любой endpoint WASAPI выдаёт PCM16/стерео/48000 Гц.
 func decodeNative(data []byte, bits, channels int, floating bool) []float32 {
 	count := len(data) / (bits / 8)
 	out := make([]float32, count)
@@ -165,6 +187,9 @@ func decodeNative(data []byte, bits, channels int, floating bool) []float32 {
 	}
 	return out
 }
+
+// encodeNative пишет сэмплы в формат endpoint; out должен вместить весь блок.
+// Владельцем нативного render buffer остаётся WASAPI до ReleaseBuffer.
 func encodeNative(out []byte, samples []float32, bits int, floating bool) {
 	for i, s := range samples {
 		s = max(-1, min(float32(.999999), s))

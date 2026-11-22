@@ -15,6 +15,9 @@ import (
 
 // Each launch has its own file, including fatal runtime failures from worker
 // goroutines. A new launch must never truncate the evidence from a previous one.
+// startDiagnostics устанавливается до запуска UI/workers. debug.SetCrashOutput
+// сохраняет аварийный стек, а не восстанавливает процесс после fatal error.
+// CLEAN EXIT появляется при нормальном возврате main; os.Exit обходит defer.
 func startDiagnostics() func() {
 	dir := "logs"
 	if e := os.MkdirAll(dir, 0755); e != nil {
@@ -66,6 +69,8 @@ func startDiagnostics() func() {
 	}
 }
 
+// logHealth снимает редкие агрегаты Go heap и GDI/USER handles. Это диагностика
+// тенденций, а не полное измерение private memory, GPU memory или CPU процесса.
 func logHealth() {
 	var stats runtime.MemStats
 	runtime.ReadMemStats(&stats)

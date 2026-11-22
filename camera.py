@@ -1,3 +1,6 @@
+# Камера Python 4.3 и диспетчер запуска dashboard/screen. Код создаёт GUI при
+# обычном запуске: для изучения используйте AST/исходник, не импорт ради introspection.
+# Архитектура и контракты: docs/legacy-python.md, docs/modules/camera.md.
 import sys
 if len(sys.argv)==1 or sys.argv[1]=='panel':
     from dashboard import main
@@ -47,6 +50,8 @@ def update_config(*args):
     config=snapshot()
     if previous is None or previous['top']!=config['top']: root.attributes('-topmost',config['top'])
 
+# Worker читает готовый config snapshot, а не Tk Variables из фонового потока.
+# cap и его driver properties принадлежат этому worker; latest передаётся под lock.
 def worker():
     global latest,info,actual
     cap=None; previous=None; applied=None; count=0; start=time.monotonic()
@@ -125,6 +130,8 @@ def start_media():
     if MODE!='client': threading.Thread(target=worker,daemon=True).start()
     if net: threading.Thread(target=net.run,daemon=True).start()
 if not managed or managed.autostart: start_media()
+# UI poll не означает новый кадр. Ключ frame/filters/size позволяет пропустить
+# повторную обработку и upload; изменение вида всё же должно инвалидировать кэш.
 def render():
     global displayed,last_render_frame,last_render_key,last_placeholder,last_status_time,minimized,config
     with lock: frame=latest

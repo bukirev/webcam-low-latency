@@ -19,6 +19,9 @@ import (
 	"unsafe"
 )
 
+// Shader обрабатывает уже декодированную текстуру. Порядок gamma → contrast/
+// brightness → saturation → clamp определяет итоговый цвет; резкость берёт соседей.
+// Настройки изменяют только локальный вид, а не передаваемый JPEG.
 const shaderSource = `sampler2D picture : register(s0);
 float4 adjust : register(c0);
 float4 detail : register(c1);
@@ -36,6 +39,8 @@ var shaderOnce sync.Once
 var shaderCode []byte
 var shaderError error
 
+// compileShader кеширует bytecode через sync.Once; ошибки компиляции также кешируются.
+// ID3DBlob::GetBufferPointer/GetBufferSize возвращают значения, а не HRESULT.
 func compileShader() ([]byte, error) {
 	shaderOnce.Do(func() {
 		dll := syscall.NewLazyDLL("d3dcompiler_47.dll")
@@ -67,6 +72,9 @@ func compileShader() ([]byte, error) {
 	return shaderCode, shaderError
 }
 
+// GPU принадлежит UI OS thread. Методы не защищены собственным mutex.
+// generation относится к Sequence кадра: повторная WM_PAINT не должна копировать
+// ту же BGRA-картинку в видеопамять заново.
 type GPU struct {
 	d3d                   *d3d9.Direct3D
 	device                *d3d9.Device
@@ -95,6 +103,10 @@ func (g *GPU) Close() {
 		g.d3d = nil
 	}
 }
+
+// Initialize создаёт windowed HAL device с немедленным Present.
+// SOFTWARE_VERTEXPROCESSING касается четырёх вершин, pixel shader работает на GPU.
+// При изменении размеров реализация пересоздаёт device вместо сложного Reset.
 func (g *GPU) Initialize(hwnd win.HWND, w, h int) error {
 
 	g.Close()
@@ -133,6 +145,8 @@ func (g *GPU) Initialize(hwnd win.HWND, w, h int) error {
 
 type vertex struct{ X, Y, Z, RHW, U, V float32 }
 
+// imageQuad меняет геометрию и UV четырёх вершин, не вращая/масштабируя CPU-буфер.
+// Полпикселя компенсирует координаты rasterizer D3D9; rotation влияет на aspect.
 func imageQuad(fw, fh, ww, wh int, c Values) []vertex {
 	rw, rh := float64(fw), float64(fh)
 	rotation := c.Int("rotation")
@@ -196,6 +210,9 @@ func imageQuad(fw, fh, ww, wh int, c Values) []vertex {
 	}
 	return out
 }
+
+// Paint загружает новую текстуру построчно с учётом native Pitch.
+// Во время reading рисование заканчивается до Present: back buffer нужен снимку.
 func (g *GPU) Paint(hwnd win.HWND, w, h int, frame *PixelFrame, c Values) error {
 	if w < 1 || h < 1 {
 		return nil
@@ -294,6 +311,9 @@ func (g *GPU) readback() (*PixelFrame, error) {
 	return f, nil
 }
 
+// Viewer связывает UI и decoder: frame защищён mu, closed — atomic.
+// HWND фиксируются при создании; worker не должен вызывать методы Walk-виджетов.
+// InvalidateRect лишь запрашивает объединяемую WM_PAINT, не ставит кадры в FIFO.
 type Viewer struct {
 	window           *walk.MainWindow
 	canvas           *walk.CustomWidget
@@ -384,6 +404,9 @@ func (v *Viewer) Clear() {
 func (v *Viewer) Visible() bool {
 	return !v.closed.Load() && win.IsWindowVisible(v.hwnd) && !win.IsIconic(v.hwnd) && v.values().Bool("preview")
 }
+
+// Publish принимает единоличное владение frame, освобождает прежний под mu
+// и инвалидирует canvas. Производитель больше не обращается к переданному Pixels.
 func (v *Viewer) Publish(frame *PixelFrame) {
 	v.mu.Lock()
 	if v.closed.Load() {
@@ -430,6 +453,9 @@ func (v *Viewer) Close() {
 		v.window.Close()
 	}
 }
+
+// Snapshot читает back buffer на UI-потоке, затем сохраняет независимую копию
+// PNG в горутине. Снимок включает обработку, поворот и поля текущего окна.
 func (v *Viewer) Snapshot() {
 	v.mu.Lock()
 	if v.frame == nil {
@@ -471,6 +497,10 @@ func (v *Viewer) Snapshot() {
 		}
 	}()
 }
+
+// decodeVideo живёт на отдельном COM-потоке и берёт только свежий JPEG.
+// FPS/видимость проверяются до декодирования; сокет продолжает принимать пакеты.
+// nil означает потерю источника и очищает видимое изображение.
 func decodeVideo(ctx context.Context, input *Latest[[]byte], view *Viewer, status *Status) {
 	done, e := comThread()
 	if e != nil {

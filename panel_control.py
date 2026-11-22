@@ -1,3 +1,6 @@
+# Локальный control plane панели Python; не переносите токен управления в UDP-медиа.
+# ManagedProcess владеет только созданным им процессом, ManagedClient передаёт
+# команды в Tk через очередь. Подробнее: docs/legacy-python.md.
 """Authenticated, loopback-only JSON control. Video/audio never pass through here."""
 from collections import deque
 import hmac
@@ -17,6 +20,8 @@ ENV_KEY = 'WEBCAM_PANEL_CONTROL'
 MAX_MESSAGE = 256 * 1024
 
 
+# Framing — одна JSON dictionary на строку. Ограничение длины защищает
+# control plane от бесконечного накопления незавершённого сообщения.
 class JsonSocket:
     def __init__(self, sock):
         self.sock = sock
@@ -71,6 +76,8 @@ def unmanaged_environment():
     return env
 
 
+# Lifetime привязан к сохранённому Popen, не к поиску процессов по имени.
+# Bootstrap token относится только к локальному управлению и не передаётся в media.
 class ManagedProcess:
     """Own exactly one child; never search for or terminate unrelated processes."""
     def __init__(self, kind, role, settings, *, autostart=True, command=None, cwd=None):
@@ -185,6 +192,8 @@ class ManagedProcess:
         return messages
 
 
+# Сетевой поток публикует команды в очередь. attach/_tick переводят исполнение
+# в Tk after callback: вызовы UI напрямую из socket thread недопустимы.
 class ManagedClient:
     def __init__(self, environment):
         self.initial = environment['settings']

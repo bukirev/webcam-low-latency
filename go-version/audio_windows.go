@@ -18,6 +18,9 @@ func audioEnumerator() (*wca.IMMDeviceEnumerator, error) {
 	e := wca.CoCreateInstance(wca.CLSID_MMDeviceEnumerator, 0, wca.CLSCTX_ALL, wca.IID_IMMDeviceEnumerator, &d)
 	return d, e
 }
+
+// endpointName учитывает поведение именно закреплённой версии go-wca: String
+// освобождает LPWSTR. Повторный PropVariantClear для этого значения повредит heap.
 func endpointName(d *wca.IMMDevice) string {
 	var ps *wca.IPropertyStore
 	if d.OpenPropertyStore(wca.STGM_READ, &ps) != nil {
@@ -63,6 +66,10 @@ func audioDevices(flow uint32) ([]NamedDevice, error) {
 	}
 	return out, nil
 }
+
+// selectEndpoint принимает endpoint ID либо имя старого Python-профиля.
+// Default endpoint разрешается при открытии; автоматического следования за
+// последующей сменой системного default здесь нет до перезапуска.
 func selectEndpoint(d *wca.IMMDeviceEnumerator, choice string, flow uint32) (*wca.IMMDevice, error) {
 	var device *wca.IMMDevice
 	if choice == "" || choice == "По умолчанию" {
@@ -90,6 +97,8 @@ func selectEndpoint(d *wca.IMMDeviceEnumerator, choice string, flow uint32) (*wc
 	return nil, fmt.Errorf("аудиоустройство отключено: %s", name)
 }
 
+// audioEndpoint владеет enumerator/device/client и выделенным Windows mix format.
+// Все операции и Close выполняются на COM OS thread создавшего его worker.
 type audioEndpoint struct {
 	de                   *wca.IMMDeviceEnumerator
 	device               *wca.IMMDevice
@@ -100,6 +109,9 @@ type audioEndpoint struct {
 	buffer               uint32
 }
 
+// openAudio открывает WASAPI shared stream в нативном mix format устройства.
+// Для loopback нужен eRender + LOOPBACK, для микрофона eCapture без этого флага.
+// Запрошенная длительность буфера не равна гарантированной сквозной задержке.
 func openAudio(choice string, flow uint32, loopback bool, blockMS int) (*audioEndpoint, error) {
 	a := &audioEndpoint{}
 	var e error
@@ -141,6 +153,9 @@ func openAudio(choice string, flow uint32, loopback bool, blockMS int) (*audioEn
 	}
 	return a, nil
 }
+
+// Close вызывается один раз после освобождения capture/render service.
+// Stop предшествует Release client, WAVEFORMATEX освобождается CoTaskMemFree.
 func (a *audioEndpoint) Close() {
 	if a.client != nil {
 		_ = a.client.Stop()
@@ -157,6 +172,9 @@ func (a *audioEndpoint) Close() {
 	}
 }
 
+// captureAudio забирает все готовые WASAPI-пакеты, копирует их в Go float32,
+// преобразует каналы/частоту и отдаёт в bounded ring. После ReleaseBuffer
+// заимствованный native data недействителен, даже если адрес ещё тот же.
 func captureAudio(ctx context.Context, choice string, system bool, rate, channels, block int, ring *FloatRing, status *Status) {
 	done, e := comThread()
 	if e != nil {
@@ -222,6 +240,9 @@ func captureAudio(ctx context.Context, choice string, system bool, rate, channel
 	}
 }
 
+// sendAudio создаёт отдельные capture workers system/mic и смешивает их по ticker.
+// Недостающие данные источника дают тишину; переполнения не накапливают задержку.
+// Local mode не воспроизводит захват, чтобы не создавать обратную связь.
 func sendAudio(ctx context.Context, store *ConfigStore, status *Status) {
 	c := store.Get()
 	v := c.Screen
@@ -360,6 +381,9 @@ type audioInput struct {
 	packets        *Latest[AudioPacket]
 }
 
+// receiveAudio сохраняет порядок пакетов в ограниченном FIFO и создаёт playback
+// заново при смене session/rate/channels. Формат принадлежит потоку сети, поэтому
+// receiver не навязывает передатчику свою sample_rate.
 func receiveAudio(ctx context.Context, store *ConfigStore, status *Status) {
 	input := make(chan AudioPacket, 64)
 	c := store.Get()
@@ -393,6 +417,10 @@ func receiveAudio(ctx context.Context, store *ConfigStore, status *Status) {
 		}
 	}
 }
+
+// receiveAudioPackets проверяет source/session/seq и держит до 64 пакетов.
+// При перегрузке удаляет старый пакет. Это не jitter reorder buffer: опоздавший
+// seq отбрасывается, позиции пропусков по timestamps протокол не восстанавливает.
 func receiveAudioPackets(ctx context.Context, host string, port int, out chan AudioPacket, status *Status) {
 	conn, e := net.ListenUDP("udp4", &net.UDPAddr{})
 	if e != nil {
@@ -481,6 +509,10 @@ func receiveAudioPackets(ctx context.Context, host string, port int, out chan Au
 		}
 	}
 }
+
+// playbackAudio использует prebuffer, удаляет избыточное отставание и дополняет
+// нехватку нулями. Вторая ring хранит остаток после resampling в формате endpoint.
+// Расчёт needed переводит число frames между частотами, затем учитывает channels.
 func playbackAudio(ctx context.Context, store *ConfigStore, rate, channels int, queue *FloatRing, status *Status) {
 	done, e := comThread()
 	if e != nil {

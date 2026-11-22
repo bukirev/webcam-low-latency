@@ -17,6 +17,8 @@ const version = "5.0 Go preview 2"
 //go:embed settings_schema.json
 var schemaFS embed.FS
 
+// Values сохраняет совместимость JSON с Python: числовые параметры могут быть строками.
+// Преобразователи ниже не заменяют validate; неизвестный ключ Str даст "<nil>".
 type Values map[string]any
 
 func (v Values) Str(k string) string {
@@ -47,6 +49,8 @@ func (v Values) Clone() Values {
 	return n
 }
 
+// Schema описывает поля как [группа, ключ, подпись, варианты/диапазон].
+// Camera/Screen/Audio строят форму, Client задаёт видимость на приёмнике.
 type Schema struct {
 	Defaults              map[string]Values `json:"defaults"`
 	Camera, Screen, Audio [][]any
@@ -62,6 +66,8 @@ func init() {
 	}
 }
 
+// Config — снимок применённых параметров. Screen содержит также параметры звука.
+// Host общий для обоих потоков; роли имеют отдельные файлы профилей.
 type Config struct {
 	Role   string `json:"role"`
 	Host   string `json:"host"`
@@ -72,6 +78,9 @@ type Config struct {
 func defaultConfig(role string) Config {
 	return Config{role, "", schema.Defaults["camera"].Clone(), schema.Defaults["screen"].Clone()}
 }
+
+// loadConfig накладывает старые профили на defaults, затем Go-профиль поверх них.
+// Неизвестные старые ключи отбрасываются; исходные Python-файлы не изменяются.
 func loadConfig(role string) Config {
 	c := defaultConfig(role)
 	// Import previous Python settings only when there is no Go profile yet.
@@ -103,6 +112,10 @@ func loadConfig(role string) Config {
 	}
 	return c
 }
+
+// saveConfig пишет временный файл рядом с профилем и затем переименовывает его.
+// Это уменьшает риск частичного JSON, но не является гарантией fsync/атомарности
+// на любой файловой системе Windows; ошибки должен обрабатывать вызывающий код.
 func saveConfig(c Config) error {
 	data, e := json.MarshalIndent(c, "", "  ")
 	if e != nil {
@@ -124,6 +137,10 @@ func saveConfig(c Config) error {
 	}
 	return os.Rename(temp, name)
 }
+
+// validate проверяет диапазоны, варианты, роль, host и конфликт портов.
+// На приёмнике параметры захвата намеренно пропускаются. Доступность устройства
+// и все сочетания полей здесь не проверяются — это проверяют рабочие модули.
 func validate(c Config) error {
 	if c.Role != "client" && c.Role != "server" && c.Role != "local" {
 		return fmt.Errorf("неизвестный режим")
@@ -182,6 +199,9 @@ func containsAny(a []any, s string) bool {
 	return false
 }
 
+// ConfigStore публикует конфигурацию через atomic.Value. Set копирует карты.
+// Полученные Get карты считаются неизменяемыми: перед правкой нужен Clone.
+// Clone поверхностный; вложенные изменяемые значения потребуют другой схемы.
 type ConfigStore struct{ value atomic.Value }
 
 func newStore(c Config) *ConfigStore { s := &ConfigStore{}; s.Set(c); return s }
@@ -191,6 +211,9 @@ func (s *ConfigStore) Set(c Config) {
 	c.Screen = c.Screen.Clone()
 	s.value.Store(c)
 }
+
+// executableDirectory делает профили, снимки и журналы относительными к EXE.
+// Это выбор переносимого приложения; библиотечный компонент не должен менять cwd.
 func executableDirectory() {
 	if p, e := os.Executable(); e == nil {
 		_ = os.Chdir(filepath.Dir(p))

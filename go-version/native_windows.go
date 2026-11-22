@@ -14,13 +14,22 @@ import (
 var oleDLL = syscall.NewLazyDLL("ole32.dll")
 var shlwapi = syscall.NewLazyDLL("shlwapi.dll")
 
+// ptr оставляет аргумент указателем до invoke/com. Раннее превращение Go-адреса
+// в uintptr скрывает его от управления временем жизни и перемещения стека.
 func ptr[T any](p *T) unsafe.Pointer { return unsafe.Pointer(p) }
+
+// hr трактует младшие 32 бита как HRESULT. Для методов, возвращающих размер
+// или адрес вместо HRESULT (например ID3DBlob), вызывающий код учитывает это сам.
 func hr(r uintptr) error {
 	if int32(r) < 0 {
 		return fmt.Errorf("Windows HRESULT 0x%08X", uint32(r))
 	}
 	return nil
 }
+
+// nativeArgs превращает типизированные аргументы в машинные слова непосредственно
+// перед системным вызовом и закрепляет явно переданные Go-указатели. Это x64 ABI
+// данного приложения, не универсальная библиотека FFI для произвольных сигнатур.
 func nativeArgs(args []any, pin *runtime.Pinner) []uintptr {
 	out := make([]uintptr, len(args))
 	for i, a := range args {
@@ -52,6 +61,9 @@ func nativeArgs(args []any, pin *runtime.Pinner) []uintptr {
 	}
 	return out
 }
+
+// invoke удерживает args и pin до завершения синхронного Windows-вызова.
+// Native API, сохраняющее указатель после возврата, требует отдельного владельца.
 func invoke(proc *syscall.LazyProc, args ...any) (uintptr, uintptr, error) {
 	var pin runtime.Pinner
 	defer pin.Unpin()
@@ -60,6 +72,10 @@ func invoke(proc *syscall.LazyProc, args ...any) (uintptr, uintptr, error) {
 	runtime.KeepAlive(args)
 	return a, b, e
 }
+
+// com вызывает метод по слоту vtable, начиная с IUnknown (0..2).
+// Ошибка индекса или ABI может повредить память; таблицы используемых слотов
+// и ограничения перечислены в docs/modules/native-windows.md.
 func com(obj uintptr, method int, args ...any) (uintptr, error) {
 	if obj == 0 {
 		return 0, fmt.Errorf("null COM object")
@@ -84,6 +100,10 @@ func query(obj uintptr, id *ole.GUID) (uintptr, error) {
 	_, e := com(obj, 0, ptr(id), ptr(&p))
 	return p, e
 }
+
+// comThread закрепляет горутину за OS thread и балансирует успешный CoInitializeEx.
+// RPC_E_CHANGED_MODE означает уже существующий apartment: не вызываем для него
+// CoUninitialize. Это не делает произвольный COM-объект доступным между потоками.
 func comThread() (func(), error) {
 	runtime.LockOSThread()
 	r, _, _ := invoke(oleDLL.NewProc("CoInitializeEx"), 0, 0)
@@ -120,6 +140,8 @@ var pixelBGRA = guid("{6fddc324-4e03-4bfe-b185-3d77768dc90f}")
 var pixelBGR = guid("{6fddc324-4e03-4bfe-b185-3d77768dc90c}")
 var containerJPEG = guid("{19e4a5aa-5662-4fc5-a0c0-1758028e1057}")
 
+// PixelFrame владеет BGRA-буфером Go, Width*Height*4 байт без padding строк.
+// После передачи Viewer.Publish владение получает Viewer; возврат в pool ровно один.
 type PixelFrame struct {
 	Width, Height int
 	Pixels        []byte
@@ -128,18 +150,25 @@ type PixelFrame struct {
 
 var pixelPool = sync.Pool{}
 
+// pixelBuffer переиспользует память как оптимизацию: sync.Pool может очиститься
+// при GC и не задаёт строгий предел RAM. Корректность не должна зависеть от cache hit.
 func pixelBuffer(n int) []byte {
 	if b, ok := pixelPool.Get().([]byte); ok && cap(b) >= n {
 		return b[:n]
 	}
 	return make([]byte, n)
 }
+
+// freePixels завершает владение буфером. После вызова Pixels нельзя читать
+// и повторно возвращать в pool, даже если сам объект PixelFrame ещё доступен.
 func freePixels(p *PixelFrame) {
 	if p != nil {
 		pixelPool.Put(p.Pixels[:0])
 	}
 }
 
+// WIC — фабрика кодеков на COM-потоке владельца. Все созданные COM-интерфейсы
+// освобождаются в Decode/EncodeBGRA; наружу выходят только Go-буферы.
 type WIC struct{ factory uintptr }
 
 func newWIC() (*WIC, error) {
@@ -147,6 +176,10 @@ func newWIC() (*WIC, error) {
 	return &WIC{p}, e
 }
 func (w *WIC) Close() { release(w.factory) }
+
+// Decode проверяет размеры JPEG до выделения BGRA. Масштаб применяется через WIC
+// scaler; API приложения не гарантирует аппаратное JPEG-декодирование или
+// обязательное использование reduced-IDCT конкретным системным декодером.
 func (w *WIC) Decode(jpg []byte, scale int) (*PixelFrame, error) {
 	if len(jpg) == 0 {
 		return nil, fmt.Errorf("пустой JPEG")
@@ -211,6 +244,8 @@ func (w *WIC) Decode(jpg []byte, scale int) (*PixelFrame, error) {
 	return &PixelFrame{Width: int(width), Height: int(height), Pixels: buffer}, nil
 }
 
+// propBag повторяет PROPBAG2 с выравниванием Windows x64. Поля и padding нельзя
+// менять по внешнему сходству: нативный IPropertyBag2 читает структуру по ABI.
 type propBag struct {
 	Type       uint32
 	Vt, ClType uint16
@@ -219,6 +254,9 @@ type propBag struct {
 	CLSID      ole.GUID
 }
 
+// EncodeBGRA синхронно кодирует плотно упакованный BGRA с положительным stride.
+// data заимствован: вызывающий код удерживает память до возврата. Сначала идут
+// необязательный resize и BGR conversion, затем JPEG/stream Commit и копия в Go.
 func (w *WIC) EncodeBGRA(data uintptr, width, height, maxWidth, quality int) ([]byte, error) {
 	var bitmap uintptr
 	_, e := com(w.factory, 20, uintptr(width), uintptr(height), ptr(pixelBGRA), uintptr(width*4), uintptr(width*height*4), data, ptr(&bitmap))
