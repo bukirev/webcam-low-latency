@@ -12,7 +12,7 @@ import (
 	"sync/atomic"
 )
 
-const version = "5.0 Go preview 1"
+const version = "5.0 Go preview 2"
 
 //go:embed settings_schema.json
 var schemaFS embed.FS

@@ -16,3 +16,4 @@ go-version/*.exe
 go-version/settings_go_*.json
 go-version/go-self-test.json
 go-version/startup.trace
+go-version/logs/

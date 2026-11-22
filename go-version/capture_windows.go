@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
@@ -300,19 +302,32 @@ type CaptureRect struct {
 	Name       string
 }
 
-func monitors() []CaptureRect {
-	var all []CaptureRect
-	callback := syscall.NewCallback(func(h, dc, rc, param uintptr) uintptr {
-		r := *(*win.RECT)(unsafe.Pointer(rc))
-		all = append(all, CaptureRect{int(r.Left), int(r.Top), int(r.Right - r.Left), int(r.Bottom - r.Top), fmt.Sprintf("%d: %dx%d (%d,%d)", len(all)+1, r.Right-r.Left, r.Bottom-r.Top, r.Left, r.Top)})
-		return 1
-	})
-	invoke(syscall.NewLazyDLL("user32.dll").NewProc("EnumDisplayMonitors"), 0, 0, callback, 0)
-	return all
+type enumerationResult struct {
+	monitors []CaptureRect
+	windows  []NamedDevice
 }
-func windowDevices() []NamedDevice {
-	var result []NamedDevice
-	callback := syscall.NewCallback(func(h, param uintptr) uintptr {
+
+// NewCallback consumes a process-wide slot that Go never frees. These native
+// entry points must be registered once, not once per frame or device refresh.
+// Opaque request IDs keep concurrent enumerations isolated without passing Go
+// slice headers through Windows or retaining completed result buffers.
+var enumerationRequests sync.Map
+var enumerationID atomic.Uint64
+var monitorCallback = syscall.NewCallback(collectMonitor)
+var windowCallback = syscall.NewCallback(collectWindow)
+
+func collectMonitor(h, dc, rc, param uintptr) uintptr {
+	if state, ok := enumerationRequests.Load(param); ok {
+		result := state.(*enumerationResult)
+		r := *(*win.RECT)(unsafe.Pointer(rc))
+		result.monitors = append(result.monitors, CaptureRect{int(r.Left), int(r.Top), int(r.Right - r.Left), int(r.Bottom - r.Top), fmt.Sprintf("%d: %dx%d (%d,%d)", len(result.monitors)+1, r.Right-r.Left, r.Bottom-r.Top, r.Left, r.Top)})
+	}
+	return 1
+}
+
+func collectWindow(h, param uintptr) uintptr {
+	if state, ok := enumerationRequests.Load(param); ok {
+		result := state.(*enumerationResult)
 		hwnd := win.HWND(h)
 		if win.IsWindowVisible(hwnd) {
 			nRaw, _, _ := invoke(syscall.NewLazyDLL("user32.dll").NewProc("GetWindowTextLengthW"), h)
@@ -320,13 +335,29 @@ func windowDevices() []NamedDevice {
 			if n > 0 {
 				buf := make([]uint16, n+1)
 				invoke(syscall.NewLazyDLL("user32.dll").NewProc("GetWindowTextW"), h, ptr(&buf[0]), uintptr(len(buf)))
-				result = append(result, NamedDevice{strconv.FormatUint(uint64(h), 10), syscall.UTF16ToString(buf)})
+				result.windows = append(result.windows, NamedDevice{strconv.FormatUint(uint64(h), 10), syscall.UTF16ToString(buf)})
 			}
 		}
-		return 1
-	})
-	invoke(syscall.NewLazyDLL("user32.dll").NewProc("EnumWindows"), callback, 0)
-	return result
+	}
+	return 1
+}
+
+func monitors() []CaptureRect {
+	result := &enumerationResult{}
+	id := uintptr(enumerationID.Add(1))
+	enumerationRequests.Store(id, result)
+	defer enumerationRequests.Delete(id)
+	invoke(syscall.NewLazyDLL("user32.dll").NewProc("EnumDisplayMonitors"), 0, 0, monitorCallback, id)
+	return result.monitors
+}
+
+func windowDevices() []NamedDevice {
+	result := &enumerationResult{}
+	id := uintptr(enumerationID.Add(1))
+	enumerationRequests.Store(id, result)
+	defer enumerationRequests.Delete(id)
+	invoke(syscall.NewLazyDLL("user32.dll").NewProc("EnumWindows"), windowCallback, id)
+	return result.windows
 }
 func screenRect(c Values) (CaptureRect, error) {
 	ms := monitors()

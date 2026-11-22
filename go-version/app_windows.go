@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"reflect"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 
@@ -38,10 +40,22 @@ type Application struct {
 
 var roleIDs = []string{"client", "server", "local"}
 
+var panelTimers sync.Map
+var panelTimerCallback = syscall.NewCallback(updatePanelTimer)
+
+func updatePanelTimer(hwnd, msg, id, stamp uintptr) uintptr {
+	if panel, ok := panelTimers.Load(hwnd); ok {
+		panel.(*Application).updateStatus()
+	}
+	return 0
+}
+
 func main() {
 
 	runtime.LockOSThread()
 	executableDirectory()
+	stopDiagnostics := startDiagnostics()
+	defer stopDiagnostics()
 	if len(os.Args) > 1 && strings.HasPrefix(os.Args[1], "--self-test") {
 		if e := selfTest(); e != nil {
 			fmt.Fprintln(os.Stderr, e)
@@ -61,9 +75,15 @@ func main() {
 		role = os.Args[1]
 	}
 	app := &Application{store: newStore(loadConfig(role)), sessions: map[string]*Session{}, devices: map[string][]NamedDevice{}}
+	log.Printf("MODE %s", role)
 	if e := app.create(); e != nil {
+		log.Printf("PANEL ERROR: %v", e)
 		walk.MsgBox(nil, "Webcam Go", e.Error(), walk.MsgBoxIconError)
 		return
+	}
+	if contains(os.Args[1:], "--autostart") {
+		app.start("camera")
+		app.start("screen")
 	}
 	app.window.Run()
 }
@@ -111,14 +131,19 @@ func (a *Application) create() error {
 		return e
 	}
 	a.window.Closing().Attach(func(cancel *bool, reason walk.CloseReason) {
+		log.Printf("PANEL CLOSE reason=%d", reason)
 		a.stopAll()
 		_ = saveConfig(a.store.Get())
+	})
+	hwnd := uintptr(a.window.Handle())
+	a.window.Disposing().Attach(func() {
+		panelTimers.Delete(hwnd)
 		if a.timer != 0 {
-			invoke(syscall.NewLazyDLL("user32.dll").NewProc("KillTimer"), uintptr(a.window.Handle()), a.timer)
+			invoke(syscall.NewLazyDLL("user32.dll").NewProc("KillTimer"), hwnd, a.timer)
 		}
 	})
-	callback := syscall.NewCallback(func(hwnd, msg, id, stamp uintptr) uintptr { a.updateStatus(); return 0 })
-	a.timer, _, _ = invoke(syscall.NewLazyDLL("user32.dll").NewProc("SetTimer"), uintptr(a.window.Handle()), 1, 500, callback)
+	panelTimers.Store(hwnd, a)
+	a.timer, _, _ = invoke(syscall.NewLazyDLL("user32.dll").NewProc("SetTimer"), hwnd, 1, 500, panelTimerCallback)
 	return nil
 }
 func (a *Application) error(e error) {
@@ -385,6 +410,7 @@ func (a *Application) changeRole() {
 	a.message.SetText("Режим изменён. Настройте параметры и нажмите «Применить».")
 }
 func (a *Application) start(kind string) {
+	log.Printf("START STREAM kind=%s role=%s", kind, a.store.Get().Role)
 	if s := a.sessions[kind]; s != nil && s.active.Load() {
 		if s.view != nil {
 			s.view.Show()
@@ -463,6 +489,7 @@ func (a *Application) start(kind string) {
 	a.message.SetText("Поток запущен. Изменения параметров передаются только кнопкой «Применить».")
 }
 func (a *Application) stop(kind string) {
+	log.Printf("STOP STREAM kind=%s", kind)
 	if s := a.sessions[kind]; s != nil {
 		s.active.Store(false)
 		s.cancel()
