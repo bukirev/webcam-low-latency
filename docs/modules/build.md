@@ -12,13 +12,26 @@
 
 Последовательность: CGO_ENABLED=0 → go test → pinned rsrc → build → README/BAT →
 dependency licenses → allowlist ZIP → размер и SHA256.
-Выход: `dist/go-preview/WebcamGo/WebcamGo.exe` и `release/WebcamGo-Windows-x64.zip`.
+Скрипт в ветке `obs-native` собирает `dist/go-obs/WebcamGoOBS/WebcamGo.exe`
+и `release/VB2Link-OBS-Windows-x64.zip` с мостом Teleport и его скриптом настройки.
 EXE собирается `-trimpath -ldflags '-H=windowsgui -s -w'`.
 
 Windows GUI subsystem скрывает обычную консоль, поэтому stderr нельзя считать
 достаточным пользовательским журналом. Это причина наличия diagnostics_windows.go.
 Trimpath убирает пути сборки из Go metadata; strip уменьшает бинарник. Это не
 обфускация, подпись, защита от модификаций или гарантия одинаковых байтов любой сборки.
+
+| Скрипт | Назначение | Артефакты |
+|---|---|---|
+| [build.ps1](../../go-version/build.ps1) | Go без Cgo, переносимый EXE с мостом Teleport | EXE, инструкции, четыре launcher BAT, скрипты настройки OBS, лицензии |
+| [build-sender.ps1](../../go-version/build-sender.ps1) | Передатчик с номером версии в ресурсе Windows, отдельная сборка менеджера | `release/sender/v<версия>/` |
+| [obs-plugin/build.ps1](../../obs-plugin/build.ps1) | Windows x64, Cgo, LLVM MinGW, SDK и libobs 30.1.2. `-PluginOnly` подходит публичной ветке | ZIP ручной установки. При наличии исходников менеджера также `release/obs-direct/v<версия>/` |
+| [build-system.ps1](../../go-version/build-system.ps1) | Объединение пакетов и каталога. `-UseExisting` переиспользует оба проверенных ZIP по их версиям | `release/suite/v<версия>/` |
+
+Установщик и отдельные менеджеры требуют локальных исходников и тестов.
+Публичная сборка DLL и Go EXE доступна отдельно. Сборку релиза запускают с
+явными новыми номерами версий, поскольку значения по умолчанию могут
+указывать на уже выпущенный набор. См. [контракт обновления](../webcamgo-updates.md).
 
 ## Зависимости
 

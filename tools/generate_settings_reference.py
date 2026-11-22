@@ -22,6 +22,10 @@ def consumer(kind, key):
         return 'imageQuad / GPU.Paint', 'Live, только локальный вид'
     if key in ('receive_fps', 'decode_scale', 'preview'):
         return 'decodeVideo / Viewer', 'Live, локальный preview; sender не меняется'
+    if key == 'adaptive_video':
+        return 'VideoSender / capture loop', 'Live, передатчик; обратная связь STAT'
+    if key == 'adaptive_resolution':
+        return 'budgetJPEG / WIC.EncodeBGRA', 'Live, передатчик; при включённой адаптации и JPEG-кодировании'
     if kind == 'camera':
         if key in HARDWARE:
             return 'applyCameraControls (best effort)', 'Скрыто в Go UI; драйвер может не поддерживать'
@@ -83,7 +87,9 @@ def generate():
         for group, key, label, options in schema[section]:
             seen[kind].add(key)
             default = json.dumps(schema['defaults'][kind][key], ensure_ascii=False)
-            if options is None:
+            if options == 'bool':
+                allowed = 'checkbox'
+            elif options is None:
                 allowed = 'checkbox' if isinstance(schema['defaults'][kind][key], bool) else 'текст'
             elif options == 'devices':
                 allowed = 'Динамический список устройств/окон'
@@ -106,6 +112,8 @@ def generate():
         '  всё ещё присутствует в общей схеме, но воспроизведение там не запускается.',
         '  Не следует обещать влияние этих параметров на sender.',
         '- Camera quality не задаёт качество raw MJPG камеры. Для него значение выбирает драйвер.',
+        '- Передатчик VB2Link показывает расширенные поля адаптации для камеры и экрана.',
+        '  Изменение ширины скрыто при отключённой адаптации и для нативного MJPG камеры.',
         '- Доступный режим камеры выбирается ближайший, а не гарантированно равный requested.',
         '- `receive_fps=0` снимает локальный лимит; /2 и /4 меняют decode size и чёткость.',
         '- Hardware поля сохраняются, но capability-dependent; скрытие группы не удаляет их из JSON.',

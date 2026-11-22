@@ -6,6 +6,8 @@
 
 [Скачать единый установщик VB2Link для Windows x64](https://github.com/bukirev/webcam-low-latency/releases/download/suite-v0.1.0-preview.2/VB2Link-Setup-Windows-x64.exe) · [Описание выпуска](https://github.com/bukirev/webcam-low-latency/releases/tag/suite-v0.1.0-preview.2).
 
+[Журнал выпусков и коммитов](docs/release-log.md) · [Журнал проверок](docs/verification-log.md).
+
 Прежняя сборка Go содержит мост для Teleport. [Скачать опубликованный архив](https://github.com/bukirev/webcam-low-latency/releases/download/v5.0.0-obs.4/WebcamGo-OBS-Windows-x64.zip) · [Настройка источников](go-version/OBS.md).
 
 **Для разработчиков и агентов:** [подробная документация всех модулей](docs/README.md),

@@ -23,6 +23,8 @@ Camera и Screen — разные namespace: `camera.top` означает bool 
 
 | Ключ | Назначение | Default | Допустимые значения / UI | На client | Потребитель | Применение |
 |---|---|---|---|---|---|---|
+| `camera.adaptive_video` | Подстраивать видео под связь | `true` | checkbox | нет | VideoSender / capture loop | Live, передатчик; обратная связь STAT |
+| `camera.adaptive_resolution` | Разрешать уменьшение разрешения | `false` | checkbox | нет | budgetJPEG / WIC.EncodeBGRA | Live, передатчик; при включённой адаптации и JPEG-кодировании |
 | `camera.camera` | Индекс камеры | `"0"` | 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 | нет | captureCamera | Restart камеры на источнике |
 | `camera.resolution` | Разрешение | `"1280x720"` | 640x480, 800x600, 1280x720, 1920x1080, 2560x1440, 3840x2160 | нет | captureCamera | Restart камеры на источнике |
 | `camera.fps` | FPS захвата | `"30"` | 1…120 | нет | captureCamera | Restart камеры на источнике |
@@ -54,6 +56,8 @@ Camera и Screen — разные namespace: `camera.top` означает bool 
 
 | Ключ | Назначение | Default | Допустимые значения / UI | На client | Потребитель | Применение |
 |---|---|---|---|---|---|---|
+| `screen.adaptive_video` | Подстраивать видео под связь | `true` | checkbox | нет | VideoSender / capture loop | Live, передатчик; обратная связь STAT |
+| `screen.adaptive_resolution` | Разрешать уменьшение разрешения | `false` | checkbox | нет | budgetJPEG / WIC.EncodeBGRA | Live, передатчик; при включённой адаптации и JPEG-кодировании |
 | `screen.capture_kind` | Что захватывать | `"Монитор"` | Монитор, Все мониторы, Область, Окно (видимая область) | нет | screenRect / captureScreen | Live, только источник; зависит от capture_kind |
 | `screen.monitor` | Монитор | `"1: основной"` | Динамический список устройств/окон | нет | screenRect / captureScreen | Live, только источник; зависит от capture_kind |
 | `screen.window` | Окно (видимая область) | `""` | Динамический список устройств/окон | нет | screenRect / captureScreen | Live, только источник; зависит от capture_kind |
@@ -109,6 +113,8 @@ Camera и Screen — разные namespace: `camera.top` означает bool 
   всё ещё присутствует в общей схеме, но воспроизведение там не запускается.
   Не следует обещать влияние этих параметров на sender.
 - Camera quality не задаёт качество raw MJPG камеры. Для него значение выбирает драйвер.
+- Передатчик VB2Link показывает расширенные поля адаптации для камеры и экрана.
+  Изменение ширины скрыто при отключённой адаптации и для нативного MJPG камеры.
 - Доступный режим камеры выбирается ближайший, а не гарантированно равный requested.
 - `receive_fps=0` снимает локальный лимит; /2 и /4 меняют decode size и чёткость.
 - Hardware поля сохраняются, но capability-dependent; скрытие группы не удаляет их из JSON.

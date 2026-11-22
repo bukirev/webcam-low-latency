@@ -1,10 +1,8 @@
 # Документация для разработчиков и агентов
 
-Состояние реализации: **Go 5.0 preview 2**, базовый код `634d513`, 22 ноября 2026.
-Комментарии и документация, добавленные позднее, объясняют эту реализацию.
-Назначение материала — сопровождение приложения и перенос проверенных подходов
-в другие проекты. Это также описание ограничений: отсутствие функции не следует
-принимать за обещание, что она реализована в другом модуле.
+Документация актуализирована по **VB2Link 0.1.0-preview.2**, публичный код
+`8d920f4`, ветка `obs-native`. [Журнал выпусков](release-log.md) закрепляет историю
+и артефакты, [журнал проверок](verification-log.md) — результаты и границы тестов.
 
 ## Как читать
 
@@ -20,15 +18,18 @@
 
 ## Каждый модуль Go
 
-Все файлы сейчас входят в один `package main`. Слово «модуль» в этом руководстве
-означает логическую область ответственности файла, а не независимый Go module.
+Приложение `go-version` использует `package main` и пакет `internal/brand`.
+Сборка плагина переносит выбранные Go-файлы в отдельный C-shared пакет.
 
 | Область / исходник | Документация | Что изучать |
 |---|---|---|
 | [app_windows.go](../go-version/app_windows.go) | [Панель и сеансы](modules/application.md) | Draft/Apply, роли, запуск, UI thread |
+| [sender_panel_windows.go](../go-version/sender_panel_windows.go) | [Панель передатчика](modules/application.md#панель-передатчика-vb2link) | Компактная форма, условия видимости, предпросмотр |
 | [settings.go](../go-version/settings.go) | [Конфигурация](modules/settings.md) | Схема, миграция, immutable snapshots |
 | [settings_schema.json](../go-version/settings_schema.json) | [Все поля](settings-reference.md) | Defaults, диапазоны, видимость, потребители |
 | [protocol.go](../go-version/protocol.go) | [Сеть и очереди](modules/protocol.md) | UDP, сборка JPEG, Latest, подписчики |
+| [discovery.go](../go-version/discovery.go), [adaptive_video.go](../go-version/adaptive_video.go) | [Контракт UDP](protocols.md) | FIND/HERE, STAT, гистерезис |
+| [brand_windows.go](../go-version/internal/brand/brand_windows.go) | [Ресурсы Windows](webcamgo-updates.md#ресурсы-windows) | Оформление Walk, ICO и заставка |
 | [native_windows.go](../go-version/native_windows.go) | [COM, FFI, WIC](modules/native-windows.md) | ABI, pinning, Release, JPEG |
 | [capture_windows.go](../go-version/capture_windows.go), камера | [Камера](modules/camera.md) | Media Foundation, выбор формата, passthrough |
 | Тот же файл, экран | [Экран и callbacks](modules/screen-capture.md) | GDI, координаты, постоянные callbacks |
@@ -40,12 +41,13 @@
 | [diagnostics_windows.go](../go-version/diagnostics_windows.go) | [Диагностика](modules/diagnostics.md) | Fatal stack, журналы, health |
 | [selftest_windows.go](../go-version/selftest_windows.go) | [Аппаратный self-test](modules/selftest.md) | Проверки Windows API и чтение отчёта |
 | [build.ps1](../go-version/build.ps1), manifest, go.mod/sum | [Сборка](modules/build.md) | Standalone EXE, ресурсы, лицензии, ZIP |
-| Четыре файла `*_test.go` | [Карта тестов](modules/tests.md) | 13 автоматических проверок и их границы |
+| Go `*_test.go` | [Карта тестов](modules/tests.md) | 20 проверок приложения и отдельные тесты сборок менеджера |
 | [doc.go](../go-version/doc.go) | Этот раздел | Вход через `go doc`, без runtime-логики |
 
 ## Другие разделы
 
-- [Вывод камеры, экрана и звука в OBS](modules/obs.md).
+- [Прямые источники VB2Link для OBS](modules/vb2link-direct.md).
+- [Исторический мост Teleport](modules/obs.md).
 - [Единая установка, обновления и совместимость VB2Link](webcamgo-updates.md).
 
 - [Python 4.3: каждый модуль и соответствие Go](legacy-python.md).
@@ -73,7 +75,8 @@ JSON-схему без импорта приложения и обновляет
 Настройки обеих версий, сетевые условия и численная сквозная задержка не зафиксированы.
 Нельзя приписывать весь выигрыш одному языку Go или обещать такой же результат на другом ПК.
 
-Вылет сервера подтверждён стеком `too many callback functions` и отдельным
-воспроизведением старого кода. Исправление проверено 10 000 нативных перечислений,
-13 тестами и работой сервера более шести минут, включая 240 секунд приёма трёх потоков.
-Это проверка устранения конкретной ошибки, не гарантия многосуточной безотказности.
+Вылет сервера Go preview 1 подтверждён стеком `too many callback functions` и
+воспроизведением старого кода. При выпуске Go preview 2 исправление проверили
+10 000 нативных перечислений, 13 тестами того выпуска и работой сервера более
+шести минут, включая 240 секунд приёма трёх потоков. Текущие результаты VB2Link
+сводятся в [журнале проверок](verification-log.md).
