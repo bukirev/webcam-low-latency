@@ -253,8 +253,8 @@ func captureCamera(ctx context.Context, store *ConfigStore, publish func([]byte)
 		}
 		var buffer uintptr
 		_, e = com(sample, 41, ptr(&buffer))
-		release(sample)
 		if e != nil {
+			release(sample)
 			continue
 		}
 		var data uintptr
@@ -274,6 +274,9 @@ func captureCamera(ctx context.Context, store *ConfigStore, publish func([]byte)
 			_, _ = com(buffer, 4)
 		}
 		release(buffer)
+		// Keep the sample alive through the copy and unlock. A camera allocator
+		// may recycle sample-backed storage once its sample is released.
+		release(sample)
 		count++
 		if time.Since(stamp) >= time.Second {
 			status.Set(fmt.Sprintf("Камера %dx%d | %.1f FPS (режим %.1f)", width, height, float64(count)/time.Since(stamp).Seconds(), actualFPS))

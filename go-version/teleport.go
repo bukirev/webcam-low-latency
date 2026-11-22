@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"image/color"
 	"image/jpeg"
 	"math"
@@ -27,12 +28,23 @@ func teleportHeader(kind string, timestamp time.Duration, size, metadata int) []
 	return h
 }
 
-func teleportJPEG(jpg []byte, now time.Time, stamp time.Duration) (teleportPacket, bool) {
+func teleportJPEG(jpg []byte, now time.Time, stamp time.Duration) (teleportPacket, error) {
+	// Camera drivers may omit EOI or pad a sample past it. DecodeConfig alone
+	// succeeds on a truncated frame because it reads only the headers.
+	eoi := bytes.LastIndex(jpg, []byte{0xff, 0xd9})
+	sos := bytes.Index(jpg, []byte{0xff, 0xda})
+	if sos < 0 || eoi <= sos {
+		return teleportPacket{}, errors.New("JPEG без конца кадра")
+	}
+	jpg = jpg[:eoi+2]
 	cfg, err := jpeg.DecodeConfig(bytes.NewReader(jpg))
+	if err != nil {
+		return teleportPacket{}, errors.New("Повреждён заголовок JPEG")
+	}
 	// Teleport 0.8 computes subsampled plane strides using width/2 and height/2.
-	if err != nil || cfg.ColorModel != color.YCbCrModel || cfg.Width%2 != 0 || cfg.Height%2 != 0 ||
+	if cfg.ColorModel != color.YCbCrModel || cfg.Width%2 != 0 || cfg.Height%2 != 0 ||
 		cfg.Width < 2 || cfg.Height < 2 || int64(cfg.Width)*int64(cfg.Height) > 40_000_000 {
-		return teleportPacket{}, false
+		return teleportPacket{}, errors.New("Нужен цветной JPEG с чётной шириной и высотой")
 	}
 	h := teleportHeader("JPEG", stamp, len(jpg), 88)
 	// Full-range JPEG YCbCr, with neutral chroma at 128/255.
@@ -47,7 +59,7 @@ func teleportJPEG(jpg []byte, now time.Time, stamp time.Duration) (teleportPacke
 	for i, v := range values {
 		binary.LittleEndian.PutUint32(h[16+4*i:], math.Float32bits(v))
 	}
-	return teleportPacket{h, jpg, now}, true
+	return teleportPacket{h, jpg, now}, nil
 }
 
 func teleportPCM(a AudioPacket, now time.Time, stamp time.Duration) teleportPacket {

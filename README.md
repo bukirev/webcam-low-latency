@@ -1,6 +1,6 @@
 # Webcam Low Latency 4.3
 
-**Ветка WebcamGo OBS** добавляет прямой вывод в OBS Studio через Teleport. [Скачать архив](https://github.com/bukirev/webcam-low-latency/releases/download/v5.0.0-obs.3/WebcamGo-OBS-Windows-x64.zip) · [Настройка источников](go-version/OBS.md).
+**Ветка WebcamGo OBS** добавляет прямой вывод в OBS Studio через Teleport. [Скачать архив](https://github.com/bukirev/webcam-low-latency/releases/download/v5.0.0-obs.4/WebcamGo-OBS-Windows-x64.zip) · [Настройка источников](go-version/OBS.md).
 
 **Для разработчиков и агентов:** [подробная документация всех модулей](docs/README.md),
 [архитектура](docs/architecture.md), [разобранные ошибки и опыт](docs/lessons-learned.md),

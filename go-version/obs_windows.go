@@ -89,21 +89,33 @@ func publishTeleport(out chan teleportPacket, p teleportPacket) {
 func (f *obsFeed) video(ctx context.Context, host string, epoch time.Time, out chan teleportPacket) {
 	input := newLatest[[]byte]()
 	go receiveVideo(ctx, f.magic, f.inputPort, host, input, &f.network)
+	tick := time.NewTicker(time.Second)
+	defer tick.Stop()
+	var accepted, dropped int
+	var lastError string
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-tick.C:
+			detail := fmt.Sprintf("JPEG для OBS: %d/с", accepted)
+			if dropped > 0 {
+				detail += fmt.Sprintf(" · отброшено %d (%s)", dropped, lastError)
+			}
+			f.format.Set(detail)
+			accepted, dropped = 0, 0
 		case jpg := <-input.ch:
 			if len(jpg) == 0 {
 				continue
 			}
 			now := time.Now()
-			p, ok := teleportJPEG(jpg, now, now.Sub(epoch))
-			if !ok {
-				f.format.Set("Нужен цветной JPEG с чётной шириной и высотой")
+			p, err := teleportJPEG(jpg, now, now.Sub(epoch))
+			if err != nil {
+				dropped++
+				lastError = err.Error()
 				continue
 			}
-			f.format.Set("")
+			accepted++
 			publishTeleport(out, p)
 		}
 	}

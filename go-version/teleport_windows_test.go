@@ -64,8 +64,24 @@ func TestOBSBridgeUDPToTeleport(t *testing.T) {
 						t.Fatal(err)
 					}
 				})
-			} else if err := fragments(f.magic, 42, uint32(round), jpg.Bytes(), send); err != nil {
-				t.Fatal(err)
+			} else {
+				jpegSeq := uint32(round * 2)
+				if err := fragments(f.magic, 42, jpegSeq, jpg.Bytes()[:jpg.Len()-2], send); err != nil {
+					t.Fatal(err)
+				}
+				// Give the receiver time to process the incomplete frame before
+				// publishing the valid frame through the latest-value mailbox.
+				until := time.Now().Add(30 * time.Millisecond)
+				_ = c.SetReadDeadline(until)
+				var unexpected [1]byte
+				if _, err := c.Read(unexpected[:]); err == nil {
+					t.Fatal("truncated JPEG was sent to OBS")
+				}
+				_ = c.SetReadDeadline(deadline)
+				padded := append(bytes.Clone(jpg.Bytes()), 0, 0, 0, 0)
+				if err := fragments(f.magic, 42, jpegSeq+1, padded, send); err != nil {
+					t.Fatal(err)
+				}
 			}
 			header := make([]byte, 16+metadata)
 			if _, err := io.ReadFull(c, header); err != nil {
