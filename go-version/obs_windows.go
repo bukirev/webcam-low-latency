@@ -142,7 +142,7 @@ var obsTimer = syscall.NewCallback(func(hwnd, msg, id, stamp uintptr) uintptr {
 type obsPanel struct {
 	window              *walk.MainWindow
 	host, screen, audio *walk.LineEdit
-	status              *walk.Label
+	status              *walk.TextEdit
 	start, stop         *walk.PushButton
 	bridge              *obsBridge
 }
@@ -227,7 +227,7 @@ func runOBSPanel() error {
 				PushButton{AssignTo: &p.stop, Text: "Остановить", Enabled: false, OnClicked: p.stopBridge}, HSpacer{},
 			}},
 			Label{Text: "Teleport · Manual IP: камера 127.0.0.1:16601, экран :16602, звук :16603"},
-			Label{AssignTo: &p.status, Text: "Приём остановлен", MinSize: Size{640, 72}},
+			TextEdit{AssignTo: &p.status, Text: "Приём остановлен", ReadOnly: true, VScroll: true, MinSize: Size{640, 82}, MaxSize: Size{0, 82}},
 		},
 	}).Create()
 	if err != nil {

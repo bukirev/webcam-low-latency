@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"reflect"
 	"runtime"
@@ -23,6 +24,7 @@ type Session struct {
 	active                 atomic.Bool
 	view                   *Viewer
 	status, audio, network *Status
+	startError             string
 }
 
 // Application владеет Walk-виджетами, sessions и черновиками только на UI thread.
@@ -33,7 +35,7 @@ type Application struct {
 	roleBox                    *walk.ComboBox
 	host                       *walk.LineEdit
 	message                    *walk.Label
-	cameraStatus, screenStatus *walk.Label
+	cameraStatus, screenStatus *walk.TextEdit
 	selectCamera, selectScreen *walk.CheckBox
 	store                      *ConfigStore
 	sessions                   map[string]*Session
@@ -124,12 +126,12 @@ func (a *Application) create() error {
 			}
 		}}, PushButton{Text: "■ Остановить всё", OnClicked: a.stopAll}, PushButton{Text: "Применить", OnClicked: a.apply}, HSpacer{}, PushButton{Text: "Экономия CPU обоим", OnClicked: a.economy}}},
 		Composite{Layout: HBox{}, Children: []Widget{
-			GroupBox{Title: "Камера", Layout: VBox{}, Children: []Widget{CheckBox{AssignTo: &a.selectCamera, Text: "Запускать вместе", Checked: true}, Label{AssignTo: &a.cameraStatus, Text: "Остановлено", MinSize: Size{440, 45}}, Composite{Layout: HBox{}, Children: []Widget{PushButton{Text: "▶ Старт", OnClicked: func() { a.start("camera") }}, PushButton{Text: "■ Стоп", OnClicked: func() { a.stop("camera") }}, PushButton{Text: "Окно просмотра", OnClicked: func() { a.show("camera") }}, PushButton{Text: "Снимок", OnClicked: func() {
+			GroupBox{Title: "Камера", Layout: VBox{}, Children: []Widget{CheckBox{AssignTo: &a.selectCamera, Text: "Запускать вместе", Checked: true}, TextEdit{AssignTo: &a.cameraStatus, Text: "Остановлено", ReadOnly: true, VScroll: true, MinSize: Size{280, 72}, MaxSize: Size{0, 72}}, Composite{Layout: HBox{}, Children: []Widget{PushButton{Text: "▶ Старт", OnClicked: func() { a.start("camera") }}, PushButton{Text: "■ Стоп", OnClicked: func() { a.stop("camera") }}, PushButton{Text: "Окно просмотра", OnClicked: func() { a.show("camera") }}, PushButton{Text: "Снимок", OnClicked: func() {
 				if s := a.sessions["camera"]; s != nil && s.view != nil {
 					s.view.Snapshot()
 				}
 			}}}}}},
-			GroupBox{Title: "Экран и звук", Layout: VBox{}, Children: []Widget{CheckBox{AssignTo: &a.selectScreen, Text: "Запускать вместе", Checked: true}, Label{AssignTo: &a.screenStatus, Text: "Остановлено", MinSize: Size{440, 45}}, Composite{Layout: HBox{}, Children: []Widget{PushButton{Text: "▶ Старт", OnClicked: func() { a.start("screen") }}, PushButton{Text: "■ Стоп", OnClicked: func() { a.stop("screen") }}, PushButton{Text: "Окно просмотра", OnClicked: func() { a.show("screen") }}, PushButton{Text: "Снимок", OnClicked: func() {
+			GroupBox{Title: "Экран и звук", Layout: VBox{}, Children: []Widget{CheckBox{AssignTo: &a.selectScreen, Text: "Запускать вместе", Checked: true}, TextEdit{AssignTo: &a.screenStatus, Text: "Остановлено", ReadOnly: true, VScroll: true, MinSize: Size{280, 72}, MaxSize: Size{0, 72}}, Composite{Layout: HBox{}, Children: []Widget{PushButton{Text: "▶ Старт", OnClicked: func() { a.start("screen") }}, PushButton{Text: "■ Стоп", OnClicked: func() { a.stop("screen") }}, PushButton{Text: "Окно просмотра", OnClicked: func() { a.show("screen") }}, PushButton{Text: "Снимок", OnClicked: func() {
 				if s := a.sessions["screen"]; s != nil && s.view != nil {
 					s.view.Snapshot()
 				}
@@ -443,6 +445,40 @@ func (a *Application) changeRole() {
 // start создаёт независимый context для камеры либо экрана/звука. Повторный
 // старт активного сеанса только поднимает окно и не применяет незавершённый draft.
 // Один процесс Go содержит несколько горутин; это не изоляция сбоев процессов.
+// Reserve all ports for this window before opening its devices. If one bind
+// fails, release the other so the user can retry immediately.
+func reserveSenderPorts(kind string, c Config) (video, audio *net.UDPConn, err error) {
+	bind := func(addr *net.UDPAddr) (*net.UDPConn, error) {
+		conn, err := net.ListenUDP("udp4", addr)
+		if err != nil {
+			return nil, fmt.Errorf("Не удалось открыть UDP %d. Проверьте, не запущен ли другой передатчик.\n%w", addr.Port, err)
+		}
+		return conn, nil
+	}
+	if c.Role == "server" && (kind == "camera" || c.Screen.Bool("video_enabled")) {
+		port := 5001
+		if kind == "screen" {
+			port = c.Screen.Int("video_port")
+		}
+		video, err = bind(&net.UDPAddr{Port: port})
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	if kind == "screen" && c.Role != "client" && c.Screen.Bool("audio_enabled") {
+		addr := &net.UDPAddr{Port: c.Screen.Int("audio_port")}
+		if c.Role == "local" {
+			addr = &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)}
+		}
+		audio, err = bind(addr)
+		if err != nil && video != nil {
+			video.Close()
+			video = nil
+		}
+	}
+	return video, audio, err
+}
+
 func (a *Application) start(kind string) {
 	log.Printf("START STREAM kind=%s role=%s", kind, a.store.Get().Role)
 	if s := a.sessions[kind]; s != nil && s.active.Load() {
@@ -456,13 +492,28 @@ func (a *Application) start(kind string) {
 		a.error(e)
 		return
 	}
+	videoConn, audioConn, err := reserveSenderPorts(kind, c)
+	if err != nil {
+		log.Printf("START FAILED kind=%s: %v", kind, err)
+		a.sessions[kind] = &Session{startError: err.Error()}
+		a.updateStatus()
+		return
+	}
 	s := &Session{status: &Status{text: "Запуск…"}, audio: &Status{}, network: &Status{}}
 	s.active.Store(true)
 	ctx, cancel := context.WithCancel(context.Background())
-	s.cancel = cancel
-	view, e := newViewer(kind, a.store, func() { s.active.Store(false); cancel() })
-	if e != nil {
+	s.cancel = func() {
 		cancel()
+		if videoConn != nil {
+			videoConn.Close()
+		}
+		if audioConn != nil {
+			audioConn.Close()
+		}
+	}
+	view, e := newViewer(kind, a.store, func() { s.active.Store(false); s.cancel() })
+	if e != nil {
+		s.cancel()
 		a.error(e)
 		return
 	}
@@ -477,7 +528,7 @@ func (a *Application) start(kind string) {
 			var sender *VideoSender
 			if c.Role == "server" {
 				sender = newVideoSender(s.network)
-				go retryMedia(ctx, func() { sender.Run(ctx, "WC30", 5001) })
+				go sender.runOn(ctx, "WC30", videoConn)
 			}
 			go retryMedia(ctx, func() {
 				captureCamera(ctx, a.store, func(jpg []byte) {
@@ -496,7 +547,7 @@ func (a *Application) start(kind string) {
 				var sender *VideoSender
 				if c.Role == "server" {
 					sender = newVideoSender(s.network)
-					go retryMedia(ctx, func() { sender.Run(ctx, "WS40", c.Screen.Int("video_port")) })
+					go sender.runOn(ctx, "WS40", videoConn)
 				}
 				go retryMedia(ctx, func() {
 					captureScreen(ctx, a.store, func(jpg []byte) {
@@ -514,7 +565,7 @@ func (a *Application) start(kind string) {
 			if c.Role == "client" {
 				go receiveAudio(ctx, a.store, s.audio)
 			} else {
-				go retryMedia(ctx, func() { sendAudio(ctx, a.store, s.audio) })
+				go sendAudio(ctx, a.store, s.audio, audioConn)
 			}
 		} else {
 			s.audio.Set("Звук отключён")
@@ -529,8 +580,11 @@ func (a *Application) start(kind string) {
 func (a *Application) stop(kind string) {
 	log.Printf("STOP STREAM kind=%s", kind)
 	if s := a.sessions[kind]; s != nil {
+		delete(a.sessions, kind)
 		s.active.Store(false)
-		s.cancel()
+		if s.cancel != nil {
+			s.cancel()
+		}
 		if s.view != nil {
 			s.view.Close()
 		}
@@ -545,7 +599,7 @@ func (a *Application) show(kind string) {
 	}
 }
 func (a *Application) updateStatus() {
-	for kind, label := range map[string]*walk.Label{"camera": a.cameraStatus, "screen": a.screenStatus} {
+	for kind, label := range map[string]*walk.TextEdit{"camera": a.cameraStatus, "screen": a.screenStatus} {
 		text := "Остановлено"
 		if s := a.sessions[kind]; s != nil && s.active.Load() {
 			text = s.status.Get()
@@ -558,7 +612,10 @@ func (a *Application) updateStatus() {
 			if s.audio.Get() != "" {
 				text += "\n" + s.audio.Get()
 			}
+		} else if s != nil && s.startError != "" {
+			text = s.startError
 		}
+		text = strings.ReplaceAll(text, "\n", "\r\n")
 		if label.Text() != text {
 			label.SetText(text)
 		}

@@ -243,7 +243,8 @@ func captureAudio(ctx context.Context, choice string, system bool, rate, channel
 // sendAudio создаёт отдельные capture workers system/mic и смешивает их по ticker.
 // Недостающие данные источника дают тишину; переполнения не накапливают задержку.
 // Local mode не воспроизводит захват, чтобы не создавать обратную связь.
-func sendAudio(ctx context.Context, store *ConfigStore, status *Status) {
+func sendAudio(ctx context.Context, store *ConfigStore, status *Status, conn *net.UDPConn) {
+	defer conn.Close()
 	c := store.Get()
 	v := c.Screen
 	rate, channels, block := v.Int("sample_rate"), v.Int("channels"), v.Int("block_ms")
@@ -251,16 +252,6 @@ func sendAudio(ctx context.Context, store *ConfigStore, status *Status) {
 		status.Set("Неверный формат передачи звука")
 		return
 	}
-	listen := &net.UDPAddr{Port: v.Int("audio_port")}
-	if c.Role == "local" {
-		listen = &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)}
-	}
-	conn, e := net.ListenUDP("udp4", listen)
-	if e != nil {
-		status.Set(e.Error())
-		return
-	}
-	defer conn.Close()
 	done := make(chan struct{})
 	defer close(done)
 	go func() {

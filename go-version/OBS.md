@@ -1,4 +1,8 @@
-# WebcamGo 5.0 OBS preview 1
+# WebcamGo 5.0 OBS preview 2
+
+На передающем компьютере достаточно одного WebcamGo в режиме **Передатчик**. Уже работающий передатчик можно использовать с новым приёмником. Если хочешь заменить его, сначала останови старый и запусти `START_SERVER.bat` из новой папки. `START_OBS.bat` запускается на компьютере с OBS. Если обе роли на одном ПК, укажи в приёмнике `127.0.0.1`.
+
+Если UDP-порт занят, панель передатчика показывает номер порта и предлагает проверить другой запущенный экземпляр. Если локальные потоки идут, а с другого ПК они недоступны, проверь IP передатчика и разрешение его EXE в профиле частной сети Windows. [Справка Microsoft](https://support.microsoft.com/ru-ru/windows/security/windows-security/firewall-and-network-protection-in-the-windows-security-app).
 
 На компьютере с OBS установите [Teleport 0.8.0 для Windows x64](https://github.com/fzwoch/obs-teleport/releases/tag/0.8.0) и перезапустите OBS. Проверенная комбинация — OBS Studio 31.1.0 и Teleport 0.8.0. Плагин в архив WebcamGo не входит. Для OBS 30.1.2 эта сборка плагина не проверена.
 

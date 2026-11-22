@@ -276,6 +276,10 @@ func (s *VideoSender) Run(ctx context.Context, magic string, port int) {
 		s.status.Set(e.Error())
 		return
 	}
+	s.runOn(ctx, magic, conn)
+}
+
+func (s *VideoSender) runOn(ctx context.Context, magic string, conn *net.UDPConn) {
 	defer conn.Close()
 	done := make(chan struct{})
 	defer close(done)
