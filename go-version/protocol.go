@@ -304,10 +304,14 @@ func (s *VideoSender) runOn(ctx context.Context, magic string, conn *net.UDPConn
 	}()
 	go func() {
 		buf := make([]byte, 256)
+		name := localDiscoveryName()
 		for {
 			n, addr, e := conn.ReadFromUDP(buf)
 			if e != nil {
 				return
+			}
+			if replyDiscovery(conn, addr, buf[:n], magic, name) {
+				continue
 			}
 			prefix := magic + " SUB "
 			if !strings.HasPrefix(string(buf[:n]), prefix) {

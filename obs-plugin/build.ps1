@@ -3,7 +3,7 @@ param(
     [string]$Clang,
     [string]$ObsSdk,
     [string]$ObsBin = 'C:\Program Files\obs-studio\bin\64bit',
-    [string]$Version = '0.1.0-preview.1',
+    [string]$Version = '0.1.0-preview.2',
     [switch]$PluginOnly
 )
 $ErrorActionPreference = 'Stop'
@@ -25,7 +25,7 @@ if (-not (Test-Path -LiteralPath "$ObsBin/obs.dll")) { throw 'obs.dll was not fo
 # Stage the same wire, retry and WIC implementation as the standalone build.
 $stage = "$root/build/obs-native"
 New-Item -ItemType Directory -Path $stage -Force | Out-Null
-foreach ($file in @('go.mod','go.sum','protocol.go','audio.go','audio_receive_windows.go','broadcast_windows.go','session.go','native_windows.go')) {
+foreach ($file in @('go.mod','go.sum','protocol.go','discovery.go','audio.go','audio_receive_windows.go','broadcast_windows.go','session.go','native_windows.go')) {
     Copy-Item -LiteralPath "$root/go-version/$file" -Destination $stage -Force
 }
 foreach ($file in @('plugin.go','bridge.h','module.c')) {

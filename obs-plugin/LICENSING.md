@@ -8,7 +8,7 @@ License версии 2 или любой более поздней версии 
 
 - `obs-plugin/plugin.go`, `obs-plugin/bridge.h`, `obs-plugin/module.c`;
 - `go-version/protocol.go`, `go-version/audio.go`, `go-version/audio_receive_windows.go`,
-  `go-version/broadcast_windows.go`, `go-version/session.go`, `go-version/native_windows.go`,
+  `go-version/broadcast_windows.go`, `go-version/discovery.go`, `go-version/session.go`, `go-version/native_windows.go`,
   которые компилируются в DLL плагина.
 
 Сторонние компоненты сохраняют свои лицензии. Для сборки используется

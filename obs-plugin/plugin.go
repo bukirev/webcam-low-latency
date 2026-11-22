@@ -1,5 +1,6 @@
 package main
 
+// #include <stdlib.h>
 // #include "bridge.h"
 import "C"
 
@@ -30,6 +31,33 @@ func obs_module_ver() C.uint32_t { return C.webcam_module_version() }
 
 //export obs_module_load
 func obs_module_load() C.bool { return C.webcam_module_load() }
+
+//export webcam_discover
+func webcam_discover(kind, port C.int, list *C.obs_property_t) C.int {
+	magic := "WC30"
+	switch kind {
+	case 1:
+		magic = "WS40"
+	case 2:
+		magic = "WA40"
+	}
+	senders, err := searchLAN(magic, int(port), lanDiscoveryIPs())
+	if err != nil {
+		return -1
+	}
+	for _, sender := range senders {
+		ip := sender.ip.String()
+		label := ip
+		if sender.name != "" {
+			label = sender.name + " (" + ip + ")"
+		}
+		name, address := C.CString(label), C.CString(ip)
+		C.webcam_list_sender(list, name, address)
+		C.free(unsafe.Pointer(name))
+		C.free(unsafe.Pointer(address))
+	}
+	return C.int(len(senders))
+}
 
 //export webcam_start
 func webcam_start(source *C.obs_source_t, kind C.int, host *C.char, port, fps, scale C.int) C.uintptr_t {

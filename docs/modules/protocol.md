@@ -2,6 +2,8 @@
 
 Включение IPv4 broadcast для Windows вынесено в [broadcast_windows.go](../../go-version/broadcast_windows.go).
 
+[discovery.go](../../go-version/discovery.go) выполняет поиск по активному порту потока. Передатчик отвечает на `<magic> FIND <nonce>` пакетом `<magic> HERE <nonce> <hostname>` на исходный IP и порт запрашивающего сокета. Поиск ограничен 550 мс и 64 ответившими адресами. Совпадение nonce и порта связывает ответ с текущим поиском. Эти сообщения не добавляют подписчиков и не меняют формат кадров или PCM. Старые передатчики остаются доступны по IP.
+
 [Исходник](../../go-version/protocol.go) · [Wire format](../protocols.md)
 
 ## Компоненты
@@ -59,6 +61,7 @@ Socket code требует broadcast helper Windows и политики discover
 Сохранение wire format полезно для постепенной миграции; смена codecs/header
 требует новой версии формата и interop tests.
 
-Проверки: fragmentation/reorder/wrap, malformed/expired parts, latest mailbox,
+Проверки: [поиск двух передатчиков на одном порту](../../go-version/discovery_test.go),
+fragmentation/reorder/wrap, malformed/expired parts, latest mailbox,
 UDP loopback и реальная Python-реализация в обоих направлениях.
 Нет полноценного fault-injection теста на любую потерю/дубликат/перегрузку сети.

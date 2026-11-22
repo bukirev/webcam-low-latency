@@ -283,10 +283,14 @@ func sendAudio(ctx context.Context, store *ConfigStore, status *Status, conn *ne
 	subscriptions := make(chan string, 32)
 	go func() {
 		buf := make([]byte, 256)
+		name := localDiscoveryName()
 		for {
 			n, from, e := conn.ReadFromUDP(buf)
 			if e != nil {
 				return
+			}
+			if c.Role == "server" && replyDiscovery(conn, from, buf[:n], "WA40", name) {
+				continue
 			}
 			if c.Role != "local" && string(buf[:n]) == fmt.Sprintf("WA40 SUB %d", from.Port) {
 				select {
