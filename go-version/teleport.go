@@ -75,30 +75,6 @@ func teleportPCM(a AudioPacket, now time.Time, stamp time.Duration) teleportPack
 	return teleportPacket{h, pcm, now}
 }
 
-// A sequence gap or new format anchors audio back to the receiver clock.
-// Consecutive blocks advance by sample count, even when UDP arrives in bursts.
-type teleportAudioClock struct {
-	last   AudioPacket
-	base   time.Duration
-	frames int64
-}
-
-func (c *teleportAudioClock) stamp(packet AudioPacket, elapsed time.Duration) time.Duration {
-	next := c.base
-	if c.last.Rate != 0 {
-		next += time.Duration(c.frames * int64(time.Second) / int64(c.last.Rate))
-	}
-	if c.last.Rate != packet.Rate || c.last.Channels != packet.Channels ||
-		c.last.Session != packet.Session || c.last.Seq+1 != packet.Seq ||
-		elapsed-next > 100*time.Millisecond || next-elapsed > 100*time.Millisecond {
-		c.base, c.frames = max(next, elapsed), 0
-		next = c.base
-	}
-	c.frames += int64(packet.Frames)
-	c.last = packet
-	return next
-}
-
 // One OBS connection per feed. A stalled writer is dropped so TCP cannot hold
 // up UDP reception. Old queue entries are skipped after disconnect/reconnect.
 func serveTeleport(ctx context.Context, listener net.Listener, packets <-chan teleportPacket, status *Status) {

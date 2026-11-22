@@ -1,5 +1,7 @@
 # protocol.go — сеть видео и контейнер свежего кадра
 
+Включение IPv4 broadcast для Windows вынесено в [broadcast_windows.go](../../go-version/broadcast_windows.go).
+
 [Исходник](../../go-version/protocol.go) · [Wire format](../protocols.md)
 
 ## Компоненты

@@ -164,6 +164,22 @@ func receiveVideo(ctx context.Context, magic string, port int, host string, out 
 	}
 }
 
+func resolveSender(ctx context.Context, host string, port int) (*net.UDPAddr, error) {
+	if host == "" {
+		return &net.UDPAddr{IP: net.IPv4bcast, Port: port}, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	addresses, err := net.DefaultResolver.LookupNetIP(ctx, "ip4", host)
+	if err != nil {
+		return nil, err
+	}
+	if len(addresses) == 0 {
+		return nil, fmt.Errorf("нет IPv4-адреса для %s", host)
+	}
+	return &net.UDPAddr{IP: net.IP(addresses[0].AsSlice()), Port: port}, nil
+}
+
 // receiveVideoOnce подписывается с эфемерного UDP-порта и закрепляет IP/session
 // первого подходящего источника. При таймауте очистка публикует nil в decoder.
 // ReadDeadline и закрытие сокета по context ограничивают ожидание остановки.
@@ -184,11 +200,7 @@ func receiveVideoOnce(ctx context.Context, magic string, port int, host string, 
 		case <-done:
 		}
 	}()
-	target := "255.255.255.255"
-	if host != "" {
-		target = host
-	}
-	addr, e := net.ResolveUDPAddr("udp4", net.JoinHostPort(target, strconv.Itoa(port)))
+	addr, e := resolveSender(ctx, host, port)
 	if e != nil {
 		return e
 	}

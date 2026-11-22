@@ -1,5 +1,7 @@
 # audio_windows.go — WASAPI capture, mix, transport и playback
 
+Приём UDP вынесен в [audio_receive_windows.go](../../go-version/audio_receive_windows.go), чтобы его мог использовать плагин OBS без подключения WASAPI.
+
 [Исходник](../../go-version/audio_windows.go) · [Алгоритмы](audio-core.md)
 
 ## Устройства и ownership

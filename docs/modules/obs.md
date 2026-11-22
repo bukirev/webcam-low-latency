@@ -1,5 +1,7 @@
 # Мост WebcamGo → OBS Teleport
 
+На ветке `obs-native` можно использовать [WebcamGo Direct](../../obs-plugin/README.md). Он принимает UDP в процессе OBS.
+
 [Панель и приём UDP](../../go-version/obs_windows.go), [упаковка Teleport](../../go-version/teleport.go), [тест полного пути](../../go-version/teleport_windows_test.go), [настройка OBS](../../go-version/OBS.md).
 
 [Тест занятых портов передатчика](../../go-version/sender_ports_windows_test.go) проверяет, что при конфликте звукового порта порт экрана освобождается сразу и запуск можно повторить.

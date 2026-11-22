@@ -1,5 +1,7 @@
 # Webcam Low Latency 4.3
 
+**Ветка WebcamGo Direct** содержит плагин, который принимает камеру, экран и звук напрямую в OBS. [Установка и сборка](obs-plugin/README.md).
+
 **Ветка WebcamGo OBS** добавляет прямой вывод в OBS Studio через Teleport. [Скачать архив](https://github.com/bukirev/webcam-low-latency/releases/download/v5.0.0-obs.4/WebcamGo-OBS-Windows-x64.zip) · [Настройка источников](go-version/OBS.md).
 
 **Для разработчиков и агентов:** [подробная документация всех модулей](docs/README.md),

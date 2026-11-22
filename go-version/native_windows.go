@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"github.com/go-ole/go-ole"
 	"math"
-	"net"
 	"runtime"
 	"sync"
 	"syscall"
@@ -120,20 +119,6 @@ func createCOM(clsid, iid *ole.GUID) (uintptr, error) {
 	var p uintptr
 	r, _, _ := invoke(oleDLL.NewProc("CoCreateInstance"), ptr(clsid), 0, 1, ptr(iid), ptr(&p))
 	return p, hr(r)
-}
-func enableBroadcast(c *net.UDPConn) error {
-	raw, e := c.SyscallConn()
-	if e != nil {
-		return e
-	}
-	var result error
-	e = raw.Control(func(fd uintptr) {
-		result = syscall.SetsockoptInt(syscall.Handle(fd), syscall.SOL_SOCKET, syscall.SO_BROADCAST, 1)
-	})
-	if e != nil {
-		return e
-	}
-	return result
 }
 
 var pixelBGRA = guid("{6fddc324-4e03-4bfe-b185-3d77768dc90f}")

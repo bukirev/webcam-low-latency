@@ -125,7 +125,7 @@ func (f *obsFeed) audio(ctx context.Context, host string, epoch time.Time, out c
 	input := make(chan AudioPacket, 8)
 	f.network.Set("Ожидание передатчика")
 	go retryMedia(ctx, func() { receiveAudioPackets(ctx, host, f.inputPort, input, &f.network) })
-	var clock teleportAudioClock
+	var clock audioSampleClock
 	timeout := time.NewTimer(2 * time.Second)
 	defer timeout.Stop()
 	for {

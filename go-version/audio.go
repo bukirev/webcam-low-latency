@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"sync"
+	"time"
 )
 
 // AudioPacket содержит межканальные float32-сэмплы после разбора PCM16.
@@ -210,4 +211,28 @@ func encodeNative(out []byte, samples []float32, bits int, floating bool) {
 			p[0] = byte(s*127 + 128)
 		}
 	}
+}
+
+// A sequence gap or new format anchors audio back to the receiver clock.
+// Consecutive blocks advance by sample count, even when UDP arrives in bursts.
+type audioSampleClock struct {
+	last   AudioPacket
+	base   time.Duration
+	frames int64
+}
+
+func (c *audioSampleClock) stamp(packet AudioPacket, elapsed time.Duration) time.Duration {
+	next := c.base
+	if c.last.Rate != 0 {
+		next += time.Duration(c.frames * int64(time.Second) / int64(c.last.Rate))
+	}
+	if c.last.Rate != packet.Rate || c.last.Channels != packet.Channels ||
+		c.last.Session != packet.Session || c.last.Seq+1 != packet.Seq ||
+		elapsed-next > 100*time.Millisecond || next-elapsed > 100*time.Millisecond {
+		c.base, c.frames = max(next, elapsed), 0
+		next = c.base
+	}
+	c.frames += int64(packet.Frames)
+	c.last = packet
+	return next
 }
