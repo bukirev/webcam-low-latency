@@ -1,4 +1,4 @@
-# Webcam Go 5.0 — OBS preview 2
+# Webcam Go 5.0 — OBS preview 3
 
 На ветке OBS используйте `START_OBS.bat` для передачи принятых камеры, экрана и звука прямо в OBS. [Инструкция](https://github.com/bukirev/webcam-low-latency/blob/obs-teleport/go-version/OBS.md).
 

@@ -18,6 +18,7 @@ New-Item -ItemType Directory -Path $bundle -Force | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Go build failed' }
 Copy-Item -LiteralPath README.md -Destination "$bundle/README.md"
 Copy-Item -LiteralPath OBS.md -Destination "$bundle/OBS.md"
+Copy-Item -LiteralPath Setup-OBS.ps1, SETUP_OBS.bat -Destination $bundle
 $obsCommand = '@echo off' + "`r`n" + 'start "" "%~dp0WebcamGo.exe" obs' + "`r`n"
 [IO.File]::WriteAllText("$bundle/START_OBS.bat", $obsCommand, [Text.Encoding]::ASCII)
 foreach ($role in @('CLIENT', 'SERVER', 'LOCAL')) {
@@ -46,7 +47,7 @@ $inventory | Set-Content -LiteralPath "$licenses/THIRD-PARTY.txt" -Encoding UTF8
 New-Item -ItemType Directory -Path "$projectRoot/release" -Force | Out-Null
 $archive = Join-Path $projectRoot 'release/WebcamGo-OBS-Windows-x64.zip'
 # Явный allowlist не допускает попадания профилей, логов и снимков в ZIP.
-$packageFiles = @("$bundle/WebcamGo.exe", "$bundle/README.md", "$bundle/OBS.md", "$bundle/START_OBS.bat", "$bundle/START_CLIENT.bat", "$bundle/START_SERVER.bat", "$bundle/START_LOCAL.bat", $licenses)
+$packageFiles = @("$bundle/WebcamGo.exe", "$bundle/README.md", "$bundle/OBS.md", "$bundle/START_OBS.bat", "$bundle/SETUP_OBS.bat", "$bundle/Setup-OBS.ps1", "$bundle/START_CLIENT.bat", "$bundle/START_SERVER.bat", "$bundle/START_LOCAL.bat", $licenses)
 Compress-Archive -LiteralPath $packageFiles -DestinationPath $archive -Force
 Get-Item -LiteralPath "$bundle/WebcamGo.exe", $archive | Select-Object FullName, Length
 $archiveHash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash
