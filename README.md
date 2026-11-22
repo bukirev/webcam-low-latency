@@ -1,5 +1,10 @@
 # Webcam Low Latency 4.3
 
+**Новая Go-версия 5.0 (предварительная):** [скачать WebcamGo-Windows-x64.zip](https://github.com/bukirev/webcam-low-latency/releases/download/v5.0.0-go.1/WebcamGo-Windows-x64.zip).
+Один нативный EXE для Windows x64, Direct3D, Media Foundation и WASAPI, совместимые
+UDP-потоки. [Инструкция и ограничения Go-сборки](go-version/README.md).
+Стабильная версия 4.3 доступна ниже.
+
 Приложение для Windows 10/11: веб-камера, передача экрана и системного звука с микрофоном между компьютерами по локальной сети. Камера и экран работают в отдельных окнах и процессах.
 
 ## Скачать и запустить

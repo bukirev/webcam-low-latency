@@ -10,3 +10,9 @@ dist/
 release/
 settings_screen_*.json
 settings_dashboard.json
+.tools/
+go-version/*.syso
+go-version/*.exe
+go-version/settings_go_*.json
+go-version/go-self-test.json
+go-version/startup.trace
