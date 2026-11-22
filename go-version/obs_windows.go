@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/bukirev/webcam-low-latency/go-version/internal/brand"
 	"net"
 	"os"
 	"strconv"
@@ -216,6 +217,8 @@ func (p *obsPanel) startBridge() {
 }
 
 func runOBSPanel() error {
+	splash := brand.ShowSplash()
+	defer splash.Close()
 	c := loadConfig("client")
 	cfg := obsConfig{c.Host, c.Screen.Int("video_port"), c.Screen.Int("audio_port")}
 	if data, err := os.ReadFile(obsSettings); err == nil {
@@ -226,16 +229,17 @@ func runOBSPanel() error {
 	}
 	p := &obsPanel{}
 	err := (MainWindow{
-		AssignTo: &p.window, Title: "WebcamGo OBS — приёмник", Size: Size{760, 300},
+		AssignTo: &p.window, Title: "VB2Link — мост OBS", Size: Size{760, 345}, Visible: false,
 		MinSize: Size{720, 280}, Font: Font{Family: "Segoe UI", PointSize: 10}, Layout: VBox{},
 		Children: []Widget{
+			brand.Header("VB2Link OBS"),
 			Composite{Layout: Grid{Columns: 2}, Children: []Widget{
 				Label{Text: "IP передатчика (пусто — поиск)"}, LineEdit{AssignTo: &p.host, Text: cfg.Host},
 				Label{Text: "UDP-порт экрана"}, LineEdit{AssignTo: &p.screen, Text: strconv.Itoa(cfg.ScreenPort)},
 				Label{Text: "UDP-порт звука"}, LineEdit{AssignTo: &p.audio, Text: strconv.Itoa(cfg.AudioPort)},
 			}},
 			Composite{Layout: HBox{}, Children: []Widget{
-				PushButton{AssignTo: &p.start, Text: "Запустить приём", OnClicked: p.startBridge},
+				PushButton{AssignTo: &p.start, Name: "primary", Text: "Запустить приём", OnClicked: p.startBridge},
 				PushButton{AssignTo: &p.stop, Text: "Остановить", Enabled: false, OnClicked: p.stopBridge}, HSpacer{},
 			}},
 			Label{Text: "Teleport · Manual IP: камера 127.0.0.1:16601, экран :16602, звук :16603"},
@@ -261,6 +265,8 @@ func runOBSPanel() error {
 			p.bridge.close()
 		}
 	})
+	brand.Window(p.window)
+	splash.Reveal(p.window)
 	p.window.Run()
 	return nil
 }

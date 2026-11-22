@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/bukirev/webcam-low-latency/go-version/internal/brand"
 	"github.com/gonutz/d3d9"
 	"github.com/lxn/walk"
 	. "github.com/lxn/walk/declarative"
@@ -325,27 +326,44 @@ type Viewer struct {
 	sequence         uint64
 	status           *Status
 	closed           atomic.Bool
+	senderPreview    bool
+	previewShown     atomic.Bool
+	disposing        bool
 	hwnd, canvasHWND win.HWND
 	onClose          func()
 }
 
 func newViewer(kind string, store *ConfigStore, onClose func()) (*Viewer, error) {
-	v := &Viewer{kind: kind, store: store, status: &Status{}, onClose: onClose}
+	v := &Viewer{kind: kind, store: store, status: &Status{}, onClose: onClose, senderPreview: store.Get().Role == "server"}
 	title := "Камера"
 	if kind == "screen" {
 		title = "Экран и звук"
 	}
-	e := (MainWindow{AssignTo: &v.window, Title: "Webcam Go — " + title, Size: Size{1000, 700}, MinSize: Size{320, 240}, Layout: VBox{MarginsZero: true, SpacingZero: true}, Children: []Widget{
-		Composite{Layout: HBox{}, Children: []Widget{Label{Text: "Настройки — в единой панели"}, HSpacer{}, PushButton{Text: "Полный экран (F11)", OnClicked: func() { _ = v.window.SetFullscreen(!v.window.Fullscreen()) }}, PushButton{Text: "Снимок (F5)", OnClicked: func() { v.Snapshot() }}}},
+	size := Size{1000, 700}
+	var tools []Widget
+	if v.senderPreview {
+		size = Size{720, 480}
+		tools = append(tools, PushButton{Text: "Скрыть", OnClicked: v.Hide})
+	}
+	tools = append(tools, HSpacer{}, PushButton{Text: "Полный экран (F11)", OnClicked: func() { _ = v.window.SetFullscreen(!v.window.Fullscreen()) }}, PushButton{Text: "Снимок (F5)", OnClicked: func() { v.Snapshot() }})
+	e := (MainWindow{AssignTo: &v.window, Title: brand.Name + " — " + title, Size: size, MinSize: Size{320, 240}, Visible: !v.senderPreview, Layout: VBox{MarginsZero: true, SpacingZero: true}, Children: []Widget{
+		Composite{Layout: HBox{}, Children: tools},
 		CustomWidget{AssignTo: &v.canvas, PaintPixels: func(c *walk.Canvas, b walk.Rectangle) error { return v.paint(c, b) }, PaintMode: PaintNoErase, InvalidatesOnResize: true},
 	}}).Create()
 	if e != nil {
 		return nil, e
 	}
+	brand.Window(v.window)
 
 	v.hwnd, v.canvasHWND = v.window.Handle(), v.canvas.Handle()
 	v.canvas.SetMinMaxSize(walk.Size{Width: 100, Height: 100}, walk.Size{})
-	v.window.Closing().Attach(func(cancel *bool, reason walk.CloseReason) {
+	v.window.Closing().Attach(func(cancel *bool, _ walk.CloseReason) {
+		if v.senderPreview && !v.disposing {
+			*cancel = true
+			v.Hide()
+			return
+		}
+		v.previewShown.Store(false)
 		v.mu.Lock()
 		v.closed.Store(true)
 		freePixels(v.frame)
@@ -365,11 +383,15 @@ func newViewer(kind string, store *ConfigStore, onClose func()) (*Viewer, error)
 		case walk.KeyEscape:
 			if v.window.Fullscreen() {
 				_ = v.window.SetFullscreen(false)
+			} else if v.senderPreview {
+				v.Hide()
 			}
 		}
 	})
 
-	v.window.Show()
+	if !v.senderPreview {
+		v.window.Show()
+	}
 	v.ApplyWindowOptions()
 
 	return v, nil
@@ -402,14 +424,21 @@ func (v *Viewer) Clear() {
 	}
 }
 func (v *Viewer) Visible() bool {
-	return !v.closed.Load() && win.IsWindowVisible(v.hwnd) && !win.IsIconic(v.hwnd) && v.values().Bool("preview")
+	return !v.closed.Load() && win.IsWindowVisible(v.hwnd) && !win.IsIconic(v.hwnd) && v.previewEnabled()
+}
+
+func (v *Viewer) previewEnabled() bool {
+	if v.senderPreview {
+		return v.previewShown.Load()
+	}
+	return v.values().Bool("preview")
 }
 
 // Publish принимает единоличное владение frame, освобождает прежний под mu
 // и инвалидирует canvas. Производитель больше не обращается к переданному Pixels.
 func (v *Viewer) Publish(frame *PixelFrame) {
 	v.mu.Lock()
-	if v.closed.Load() {
+	if v.closed.Load() || v.senderPreview && !v.previewShown.Load() {
 		v.mu.Unlock()
 		freePixels(frame)
 		return
@@ -429,7 +458,10 @@ func (v *Viewer) paint(canvas *walk.Canvas, b walk.Rectangle) error {
 		return nil
 	}
 	frame := v.frame
-	if !v.values().Bool("preview") {
+	if !v.previewEnabled() {
+		if v.senderPreview {
+			return nil
+		}
 		frame = nil
 	}
 	e := v.gpu.Paint(v.canvas.Handle(), b.Width, b.Height, frame, v.values())
@@ -444,12 +476,25 @@ func (v *Viewer) paint(canvas *walk.Canvas, b walk.Rectangle) error {
 }
 func (v *Viewer) Show() {
 	if !v.closed.Load() {
+		v.previewShown.Store(true)
 		v.window.Show()
 		v.window.SetFocus()
 	}
 }
+func (v *Viewer) Hide() {
+	v.previewShown.Store(false)
+	v.window.Hide()
+	if v.window.Fullscreen() {
+		_ = v.window.SetFullscreen(false)
+		v.window.Hide()
+	}
+	v.Clear()
+	v.gpu.Close()
+	v.status.Set("")
+}
 func (v *Viewer) Close() {
 	if !v.closed.Load() {
+		v.disposing = true
 		v.window.Close()
 	}
 }

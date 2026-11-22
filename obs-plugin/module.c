@@ -197,9 +197,9 @@ static void defaults(obs_data_t *settings, int port)
 	obs_data_set_default_int(settings, "decode_scale", 1);
 }
 
-static const char *camera_name(void *data) { (void)data; return "WebcamGo Camera"; }
-static const char *screen_name(void *data) { (void)data; return "WebcamGo Screen"; }
-static const char *audio_name(void *data) { (void)data; return "WebcamGo Audio"; }
+static const char *camera_name(void *data) { (void)data; return "VB2Link Camera"; }
+static const char *screen_name(void *data) { (void)data; return "VB2Link Screen"; }
+static const char *audio_name(void *data) { (void)data; return "VB2Link Audio"; }
 static void camera_defaults(obs_data_t *s) { defaults(s, 5001); }
 static void screen_defaults(obs_data_t *s) { defaults(s, 5002); }
 static void audio_defaults(obs_data_t *s) { defaults(s, 5003); }

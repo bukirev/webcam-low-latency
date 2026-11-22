@@ -28,7 +28,7 @@ if MODE=='client': cv2.setNumThreads(1)
 try: saved=json.loads(SETTINGS.read_text(encoding='utf-8'))
 except Exception: saved={}
 if managed: saved.update(validate_settings('camera',managed.initial,MODE))
-root=tk.Tk(); root.title('Webcam Low Latency '+APP_VERSION+' — '+MODE+''); root.geometry(saved.get('geometry','1200x760'))
+root=tk.Tk(); root.title('VB2Link '+APP_VERSION+' — '+MODE); root.geometry(saved.get('geometry','1200x760'))
 V={}
 for k,v in DEFAULT.items():
     cls=tk.BooleanVar if isinstance(v,bool) else tk.DoubleVar if isinstance(v,(int,float)) else tk.StringVar

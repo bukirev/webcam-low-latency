@@ -1,8 +1,12 @@
-# Webcam Low Latency 4.3
+# VB2Link
 
-**Ветка WebcamGo Direct** содержит плагин, который принимает камеру, экран и звук напрямую в OBS. [Установка и сборка](obs-plugin/README.md).
+<img src="go-version/internal/brand/assets/mark.png" width="96" alt="Знак VB2Link">
 
-**Ветка WebcamGo OBS** добавляет прямой вывод в OBS Studio через Teleport. [Скачать архив](https://github.com/bukirev/webcam-low-latency/releases/download/v5.0.0-obs.4/WebcamGo-OBS-Windows-x64.zip) · [Настройка источников](go-version/OBS.md).
+**VB2Link** передаёт камеру, экран и звук по локальной сети. [Единый установщик и обновления](docs/webcamgo-updates.md) · [Настройка плагина OBS](obs-plugin/README.md).
+
+[Скачать единый установщик VB2Link для Windows x64](https://github.com/bukirev/webcam-low-latency/releases/download/suite-v0.1.0-preview.2/VB2Link-Setup-Windows-x64.exe) · [Описание выпуска](https://github.com/bukirev/webcam-low-latency/releases/tag/suite-v0.1.0-preview.2).
+
+Прежняя сборка Go содержит мост для Teleport. [Скачать опубликованный архив](https://github.com/bukirev/webcam-low-latency/releases/download/v5.0.0-obs.4/WebcamGo-OBS-Windows-x64.zip) · [Настройка источников](go-version/OBS.md).
 
 **Для разработчиков и агентов:** [подробная документация всех модулей](docs/README.md),
 [архитектура](docs/architecture.md), [разобранные ошибки и опыт](docs/lessons-learned.md),

@@ -101,7 +101,7 @@ func cameraDevices() ([]NamedDevice, error) {
 // captureCamera создаёт MF reader на собственном COM-потоке и выбирает ближайший
 // нативный режим с предпочтением codec. В MJPG передаёт копию JPEG, иначе просит
 // RGB32 и кодирует WIC. ReadSample синхронный: context проверяется между чтениями.
-func captureCamera(ctx context.Context, store *ConfigStore, publish func([]byte), status *Status) {
+func captureCamera(ctx context.Context, store *ConfigStore, publish func([]byte), status *Status, budget func() int) {
 	done, e := mfStart()
 	if e != nil {
 		status.Set(e.Error())
@@ -223,6 +223,7 @@ func captureCamera(ctx context.Context, store *ConfigStore, publish func([]byte)
 	}
 	count := 0
 	stamp := time.Now()
+	credit := 0
 	var previous Values
 	for ctx.Err() == nil {
 		c = store.Get().Camera
@@ -251,6 +252,19 @@ func captureCamera(ctx context.Context, store *ConfigStore, publish func([]byte)
 			}
 			continue
 		}
+		level := 0
+		if budget != nil {
+			level = budget()
+		}
+		// Budget applies to the frames the driver actually produces. Skip before
+		// locking the sample buffer, and keep native MJPG on the passthrough path.
+		credit += adaptiveFPS[level]
+		if credit < 100 {
+			release(sample)
+			continue
+		}
+		credit -= 100
+		frameWidth := width
 		var buffer uintptr
 		_, e = com(sample, 41, ptr(&buffer))
 		if e != nil {
@@ -265,8 +279,12 @@ func captureCamera(ctx context.Context, store *ConfigStore, publish func([]byte)
 				if isMJPG {
 					publish(append([]byte(nil), unsafe.Slice((*byte)(unsafe.Pointer(data)), int(length))...))
 				} else if int(length) >= width*height*4 {
-					jpg, err := engine.EncodeBGRA(data, width, height, 0, c.Int("quality"))
+					limit, quality := budgetJPEG(level, width, 0, c.Int("quality"), c.Bool("adaptive_resolution"))
+					jpg, err := engine.EncodeBGRA(data, width, height, limit, quality)
 					if err == nil {
+						if limit > 0 {
+							frameWidth = min(width, limit)
+						}
 						publish(jpg)
 					}
 				}
@@ -279,7 +297,7 @@ func captureCamera(ctx context.Context, store *ConfigStore, publish func([]byte)
 		release(sample)
 		count++
 		if time.Since(stamp) >= time.Second {
-			status.Set(fmt.Sprintf("Камера %dx%d | %.1f FPS (режим %.1f)", width, height, float64(count)/time.Since(stamp).Seconds(), actualFPS))
+			status.Set(fmt.Sprintf("Камера %dx%d | %.1f FPS (режим %.1f)", frameWidth, max(1, height*frameWidth/width), float64(count)/time.Since(stamp).Seconds(), actualFPS))
 			stamp = time.Now()
 			count = 0
 		}
@@ -426,7 +444,7 @@ func screenRect(c Values) (CaptureRect, error) {
 // captureScreen владеет desktop DC, совместимым DC и top-down DIB.
 // DIB пересоздаётся только при изменении размеров; перед DeleteObject старый bitmap
 // обязательно выводится из DC. Каждая итерация кодирует JPEG и учитывает время работы.
-func captureScreen(ctx context.Context, store *ConfigStore, publish func([]byte), status *Status) {
+func captureScreen(ctx context.Context, store *ConfigStore, publish func([]byte), status *Status, budget func() int) {
 	done, e := comThread()
 	if e != nil {
 		status.Set(e.Error())
@@ -504,7 +522,12 @@ func captureScreen(ctx context.Context, store *ConfigStore, publish func([]byte)
 		if c.Bool("cursor") {
 			drawCursor(dc, r)
 		}
-		jpg, err := engine.EncodeBGRA(bits, r.W, r.H, c.Int("max_width"), c.Int("quality"))
+		level := 0
+		if budget != nil {
+			level = budget()
+		}
+		width, quality := budgetJPEG(level, r.W, c.Int("max_width"), c.Int("quality"), c.Bool("adaptive_resolution"))
+		jpg, err := engine.EncodeBGRA(bits, r.W, r.H, width, quality)
 		if err != nil {
 			status.Set("JPEG: " + err.Error())
 			return
@@ -512,11 +535,15 @@ func captureScreen(ctx context.Context, store *ConfigStore, publish func([]byte)
 		publish(jpg)
 		count++
 		if time.Since(stamp) >= time.Second {
-			status.Set(fmt.Sprintf("Экран %dx%d | %.1f FPS", r.W, r.H, float64(count)/time.Since(stamp).Seconds()))
+			w, h := r.W, r.H
+			if width > 0 && width < w {
+				w, h = width, max(1, r.H*width/r.W)
+			}
+			status.Set(fmt.Sprintf("Экран %dx%d | %.1f FPS", w, h, float64(count)/time.Since(stamp).Seconds()))
 			count = 0
 			stamp = time.Now()
 		}
-		delay := time.Second/time.Duration(max(1, c.Int("fps"))) - time.Since(begin)
+		delay := time.Second/time.Duration(budgetFPS(level, c.Int("fps"))) - time.Since(begin)
 		if delay > 0 {
 			select {
 			case <-ctx.Done():

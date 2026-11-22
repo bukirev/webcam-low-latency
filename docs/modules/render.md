@@ -24,6 +24,11 @@ Walk widgets и D3D device используются UI OS thread. Worker про�
 frame, закрывает GPU и отменяет Session через onClose. Late Publish видит closed
 и сразу возвращает свой buffer в pool.
 
+На передатчике окно по умолчанию скрыто. Capture публикует JPEG в очередь
+декодера только пока открыт предпросмотр, а сеть получает кадры независимо от
+него. Скрытие сбрасывает кадр и освобождает Direct3D на UI-потоке. Незавершённый
+decode проверяет флаг предпросмотра при публикации кадра.
+
 ## GPU
 
 D3D9 HAL device windowed, swap effect DISCARD, Present immediate. Pixel shader 3.0

@@ -10,7 +10,7 @@ if ($Go -eq 'go' -and (Test-Path -LiteralPath "$projectRoot/.tools/go/bin/go.exe
 $env:CGO_ENABLED = '0'
 & $Go test -count=1 ./...
 if ($LASTEXITCODE -ne 0) { throw 'Go tests failed' }
-& $Go run github.com/akavel/rsrc@v0.10.2 -arch amd64 -manifest app.manifest -o app.syso
+& $Go run github.com/akavel/rsrc@v0.10.2 -arch amd64 -manifest app.manifest -ico 'internal/brand/assets/VB2Link.ico' -o app.syso
 if ($LASTEXITCODE -ne 0) { throw 'Manifest generation failed' }
 $bundle = Join-Path $projectRoot 'dist/go-obs/WebcamGoOBS'
 New-Item -ItemType Directory -Path $bundle -Force | Out-Null
@@ -45,7 +45,7 @@ $goRoot = & $Go env GOROOT
 Copy-Item -LiteralPath "$goRoot/LICENSE" -Destination "$licenses/Go-LICENSE.txt" -Force
 $inventory | Set-Content -LiteralPath "$licenses/THIRD-PARTY.txt" -Encoding UTF8
 New-Item -ItemType Directory -Path "$projectRoot/release" -Force | Out-Null
-$archive = Join-Path $projectRoot 'release/WebcamGo-OBS-Windows-x64.zip'
+$archive = Join-Path $projectRoot 'release/VB2Link-OBS-Windows-x64.zip'
 # Явный allowlist не допускает попадания профилей, логов и снимков в ZIP.
 $packageFiles = @("$bundle/WebcamGo.exe", "$bundle/README.md", "$bundle/OBS.md", "$bundle/START_OBS.bat", "$bundle/SETUP_OBS.bat", "$bundle/Setup-OBS.ps1", "$bundle/START_CLIENT.bat", "$bundle/START_SERVER.bat", "$bundle/START_LOCAL.bat", $licenses)
 Compress-Archive -LiteralPath $packageFiles -DestinationPath $archive -Force

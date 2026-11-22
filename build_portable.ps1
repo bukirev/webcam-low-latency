@@ -2,7 +2,7 @@ param([string]$Version = '4.3.0')
 $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath $PSScriptRoot
 
-python -m PyInstaller --noconfirm --clean --onedir --windowed --name WebcamLowLatency --distpath "dist/$Version" --workpath "build/$Version" --specpath build --collect-all pyaudiowpatch --collect-submodules mss camera.py
+python -m PyInstaller --noconfirm --clean --onedir --windowed --name WebcamLowLatency --icon 'go-version/internal/brand/assets/VB2Link.ico' --distpath "dist/$Version" --workpath "build/$Version" --specpath build --collect-all pyaudiowpatch --collect-submodules mss camera.py
 if ($LASTEXITCODE -ne 0) { throw 'PyInstaller failed' }
 
 $bundlePath = Join-Path $PSScriptRoot "dist/$Version/WebcamLowLatency"

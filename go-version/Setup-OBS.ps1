@@ -48,14 +48,14 @@ function Get-HashBase64([string]$Value) {
 }
 
 $feeds = @{
-    Camera = @{Name = 'WebcamGo · Камера'; Address = '127.0.0.1:16601'}
-    Screen = @{Name = 'WebcamGo · Экран'; Address = '127.0.0.1:16602'}
-    Audio  = @{Name = 'WebcamGo · Звук'; Address = '127.0.0.1:16603'}
+    Camera = @{Name = 'VB2Link · Камера'; Address = '127.0.0.1:16601'}
+    Screen = @{Name = 'VB2Link · Экран'; Address = '127.0.0.1:16602'}
+    Audio  = @{Name = 'VB2Link · Звук'; Address = '127.0.0.1:16603'}
 }
 $layouts = @(
-    @{Name = 'WebcamGo — Камера'; Feeds = @('Camera', 'Audio')},
-    @{Name = 'WebcamGo — Экран'; Feeds = @('Screen', 'Audio')},
-    @{Name = 'WebcamGo — Экран + камера'; Feeds = @('Screen', 'Camera', 'Audio')}
+    @{Name = 'VB2Link — Камера'; Feeds = @('Camera', 'Audio')},
+    @{Name = 'VB2Link — Экран'; Feeds = @('Screen', 'Audio')},
+    @{Name = 'VB2Link — Экран + камера'; Feeds = @('Screen', 'Camera', 'Audio')}
 )
 
 try {
@@ -87,6 +87,16 @@ try {
     foreach ($inputInfo in (Invoke-OBS GetInputList).inputs) { $inputs[$inputInfo.inputName] = $inputInfo.inputKind }
     $scenes = (Invoke-OBS GetSceneList).scenes.sceneName
     $canvas = Invoke-OBS GetVideoSettings
+
+    # Existing collections may already use the names from the previous bundle.
+    foreach ($feed in $feeds.Values) {
+        $old = $feed.Name.Replace('VB2Link', 'WebcamGo')
+        if (-not $inputs.ContainsKey($feed.Name) -and $inputs[$old] -eq $kind) { $feed.Name = $old }
+    }
+    foreach ($layout in $layouts) {
+        $old = $layout.Name.Replace('VB2Link', 'WebcamGo')
+        if ($scenes -notcontains $layout.Name -and $scenes -contains $old) { $layout.Name = $old }
+    }
 
     # Check all reused names before creating anything. Preserve the user's input settings.
     foreach ($feed in $feeds.Values) {

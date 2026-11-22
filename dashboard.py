@@ -41,7 +41,7 @@ class Dashboard:
         self.last_devices = None
         self.loading = True
         self.closing = False
-        root.title('Webcam Low Latency '+APP_VERSION+' — единая панель')
+        root.title('VB2Link '+APP_VERSION+' — единая панель')
         root.minsize(850, 580)
         geometry = self.preferences.get('geometry', f'1100x{min(850, max(600,root.winfo_screenheight()-100))}')
         try: root.geometry(geometry)
@@ -51,7 +51,7 @@ class Dashboard:
         style.configure('Card.TLabelframe.Label', font=('Segoe UI', 11, 'bold'))
         top = ttk.Frame(root, padding=(12, 10))
         top.pack(fill='x')
-        ttk.Label(top, text='Камера · Экран · Звук', style='Heading.TLabel').pack(side='left')
+        ttk.Label(top, text='VB2Link', style='Heading.TLabel').pack(side='left')
         ttk.Label(top, text='Единое управление  '+APP_VERSION, foreground='#647184').pack(side='right')
         connection = ttk.Frame(root, padding=(12, 0, 12, 8))
         connection.pack(fill='x')

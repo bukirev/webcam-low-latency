@@ -149,7 +149,7 @@ func selfTest() error {
 					case got <- len(jpg):
 					default:
 					}
-				}, status)
+				}, status, nil)
 			}()
 			select {
 			case n := <-got:
@@ -194,7 +194,7 @@ func selfTest() error {
 		case got <- len(jpg):
 		default:
 		}
-	}, status)
+	}, status, nil)
 	select {
 	case n := <-got:
 		checks["screen_jpeg_bytes"] = n

@@ -3,7 +3,7 @@ param(
     [string]$Clang,
     [string]$ObsSdk,
     [string]$ObsBin = 'C:\Program Files\obs-studio\bin\64bit',
-    [string]$Version = '0.1.0-preview.2',
+    [string]$Version = '0.1.0-preview.4',
     [switch]$PluginOnly
 )
 $ErrorActionPreference = 'Stop'
@@ -25,7 +25,7 @@ if (-not (Test-Path -LiteralPath "$ObsBin/obs.dll")) { throw 'obs.dll was not fo
 # Stage the same wire, retry and WIC implementation as the standalone build.
 $stage = "$root/build/obs-native"
 New-Item -ItemType Directory -Path $stage -Force | Out-Null
-foreach ($file in @('go.mod','go.sum','protocol.go','discovery.go','audio.go','audio_receive_windows.go','broadcast_windows.go','session.go','native_windows.go')) {
+foreach ($file in @('go.mod','go.sum','protocol.go','discovery.go','adaptive_video.go','audio.go','audio_receive_windows.go','broadcast_windows.go','session.go','native_windows.go')) {
     Copy-Item -LiteralPath "$root/go-version/$file" -Destination $stage -Force
 }
 foreach ($file in @('plugin.go','bridge.h','module.c')) {
@@ -38,7 +38,9 @@ New-Item -ItemType Directory -Path $dllDir -Force | Out-Null
 # Stage the link input. The final linker runs outside the package directory.
 Copy-Item -LiteralPath "$ObsBin/obs.dll" -Destination "$stage/obs.dll" -Force
 # The file version is part of the DLL so a single file swap commits the version.
+$icon = "$root/go-version/internal/brand/assets/VB2Link.ico".Replace('\','/')
 $resource = @"
+3 ICON "$icon"
 1 VERSIONINFO
 FILEVERSION $versionNumbers
 PRODUCTVERSION $versionNumbers
@@ -49,8 +51,8 @@ BEGIN
     BEGIN
         BLOCK "040904b0"
         BEGIN
-            VALUE "FileDescription", "WebcamGo Direct OBS plugin\0"
-            VALUE "ProductName", "WebcamGo Direct\0"
+            VALUE "FileDescription", "VB2Link OBS plugin\0"
+            VALUE "ProductName", "VB2Link\0"
             VALUE "FileVersion", "$Version\0"
             VALUE "ProductVersion", "$Version\0"
         END
@@ -79,7 +81,7 @@ try {
 
 Copy-Item -LiteralPath "$PSScriptRoot/README.md" -Destination "$bundle/README.md" -Force
 New-Item -ItemType Directory -Path "$root/release" -Force | Out-Null
-$archive = "$root/release/WebcamGo-OBS-Direct-Windows-x64.zip"
+$archive = "$root/release/VB2Link-OBS-Direct-Windows-x64.zip"
 $package = "$root/build/obs-native-package"
 New-Item -ItemType Directory -Path "$package/obs-plugins/64bit","$package/licenses" -Force | Out-Null
 Copy-Item -LiteralPath "$dllDir/webcamgo-direct.dll" -Destination "$package/obs-plugins/64bit/webcamgo-direct.dll" -Force
@@ -108,8 +110,10 @@ $out = "$root/release/obs-direct/v$Version"
 $update = "$root/build/obs-native-update"
 $setupStage = "$root/build/obs-native-setup"
 New-Item -ItemType Directory -Path $out,$update,$setupStage -Force | Out-Null
+New-Item -ItemType Directory -Path "$setupStage/internal" -Force | Out-Null
+Copy-Item -LiteralPath "$root/go-version/internal/brand" -Destination "$setupStage/internal" -Recurse -Force
 $updateZip = "$out/WebcamGo-OBS-Direct-Update-Windows-x64.zip"
-$setupExe = "$out/WebcamGo-OBS-Direct-Setup-Windows-x64.exe"
+$setupExe = "$out/VB2Link-OBS-Setup-Windows-x64.exe"
 $dll = "$dllDir/webcamgo-direct.dll"
 $manifest = @{
     format = 1
@@ -134,7 +138,7 @@ func init() { bundled = payload }
 $env:CGO_ENABLED = '0'
 Push-Location -LiteralPath $setupStage
 try {
-    & $Go run github.com/akavel/rsrc@v0.10.2 -arch amd64 -manifest app.manifest -o setup.syso
+    & $Go run github.com/akavel/rsrc@v0.10.2 -arch amd64 -manifest app.manifest -ico 'internal/brand/assets/VB2Link.ico' -o setup.syso
     if ($LASTEXITCODE -ne 0) { throw 'Setup manifest generation failed' }
     & $Go test -count=1 .
     if ($LASTEXITCODE -ne 0) { throw 'Setup tests failed' }

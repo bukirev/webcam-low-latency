@@ -6,9 +6,11 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"net/netip"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -98,16 +100,24 @@ func newAssembler(magic string) *Assembler {
 	return &Assembler{magic: magic, frames: map[uint32]*partialFrame{}}
 }
 
+func validFragment(p []byte, magic string) bool {
+	if len(p) <= videoHeader || len(p) > videoHeader+chunkSize || string(p[:4]) != magic {
+		return false
+	}
+	i, n := binary.BigEndian.Uint16(p[16:18]), binary.BigEndian.Uint16(p[18:20])
+	return n != 0 && n <= 4096 && i < n
+}
+
 // Push валидирует пакет до выделения частей, игнорирует повторы и старые seq.
 // Завершённый JPEG — новый независимый срез. Просрочка очищается на следующих
 // пакетах; накопления истории для последующего воспроизведения здесь нет.
 func (a *Assembler) Push(p []byte, now time.Time) ([]byte, uint32) {
-	if len(p) <= 20 || len(p) > 20+chunkSize || string(p[:4]) != a.magic {
+	if !validFragment(p, a.magic) {
 		return nil, 0
 	}
 	seq := binary.BigEndian.Uint32(p[12:16])
 	i, n := int(binary.BigEndian.Uint16(p[16:18])), int(binary.BigEndian.Uint16(p[18:20]))
-	if n < 1 || n > 4096 || i >= n || a.hasLast && !newer(seq, a.last) {
+	if a.hasLast && !newer(seq, a.last) {
 		return nil, 0
 	}
 	for k, v := range a.frames {
@@ -211,6 +221,7 @@ func receiveVideoOnce(ctx context.Context, magic string, port int, host string, 
 	a := newAssembler(magic)
 	source := ""
 	var sess uint64
+	var health videoReportWindow
 	var seen, ping, stamp time.Time
 	var bytes int
 	count := 0
@@ -223,11 +234,17 @@ func receiveVideoOnce(ctx context.Context, magic string, port int, host string, 
 				dest.IP = net.ParseIP(source)
 			}
 			_, _ = conn.WriteToUDP([]byte(fmt.Sprintf("%s SUB %d", magic, conn.LocalAddr().(*net.UDPAddr).Port)), &dest)
+			if source != "" {
+				if expected, complete := health.report(); expected > 0 {
+					_, _ = conn.WriteToUDP(videoFeedback(magic, sess, expected, complete), &dest)
+				}
+			}
 			ping = now
 		}
 		if source != "" && now.Sub(seen) > 2*time.Second {
 			source = ""
 			a = newAssembler(magic)
+			health = videoReportWindow{}
 			out.Put(nil)
 		}
 		_ = conn.SetReadDeadline(now.Add(100 * time.Millisecond))
@@ -236,7 +253,7 @@ func receiveVideoOnce(ctx context.Context, magic string, port int, host string, 
 			if ne, ok := err.(net.Error); !ok || !ne.Timeout() {
 				return err
 			}
-		} else if n > 20 && string(buf[:4]) == magic && (allowed == nil || from.IP.Equal(allowed)) {
+		} else if validFragment(buf[:n], magic) && (allowed == nil || from.IP.Equal(allowed)) {
 			session := binary.BigEndian.Uint64(buf[4:12])
 			if source == "" {
 				source = from.IP.String()
@@ -246,9 +263,11 @@ func receiveVideoOnce(ctx context.Context, magic string, port int, host string, 
 			if source == from.IP.String() && sess == session {
 				seen = now
 				bytes += n
+				health.see(binary.BigEndian.Uint32(buf[12:16]))
 				if data, _ := a.Push(buf[:n], now); data != nil {
 					out.Put(data)
 					count++
+					health.complete++
 				}
 			}
 		}
@@ -273,6 +292,26 @@ type VideoSender struct {
 	status  *Status
 	clients sync.Map
 	session uint64
+	auto    func() bool
+	level   atomic.Int32
+}
+
+type videoPeer struct {
+	lease        atomic.Int64
+	lastFeedback atomic.Int64
+	report       atomic.Pointer[peerReport]
+}
+
+type peerReport struct {
+	loss int
+	at   time.Time
+}
+
+func (s *VideoSender) currentLevel() int {
+	if s.auto == nil || !s.auto() {
+		return 0
+	}
+	return int(s.level.Load())
 }
 
 func newVideoSender(status *Status) *VideoSender {
@@ -306,54 +345,115 @@ func (s *VideoSender) runOn(ctx context.Context, magic string, conn *net.UDPConn
 		buf := make([]byte, 256)
 		name := localDiscoveryName()
 		for {
-			n, addr, e := conn.ReadFromUDP(buf)
+			n, addr, e := conn.ReadFromUDPAddrPort(buf)
 			if e != nil {
 				return
 			}
-			if replyDiscovery(conn, addr, buf[:n], magic, name) {
+			if replyDiscovery(conn, net.UDPAddrFromAddrPort(addr), buf[:n], magic, name) {
 				continue
 			}
+			addr = netip.AddrPortFrom(addr.Addr().Unmap(), addr.Port())
 			prefix := magic + " SUB "
-			if !strings.HasPrefix(string(buf[:n]), prefix) {
+			if value, ok := strings.CutPrefix(string(buf[:n]), prefix); ok {
+				p, e := strconv.Atoi(value)
+				if e == nil && p > 0 && p < 65536 {
+					key := netip.AddrPortFrom(addr.Addr(), uint16(p))
+					now := time.Now().UnixNano()
+					if current, ok := s.clients.Load(key); ok {
+						current.(*videoPeer).lease.Store(now)
+					} else {
+						peer := &videoPeer{}
+						peer.lease.Store(now)
+						s.clients.Store(key, peer)
+					}
+				}
 				continue
 			}
-			p, e := strconv.Atoi(string(buf[len(prefix):n]))
-			if e == nil && p > 0 && p < 65536 {
-				s.clients.Store(net.JoinHostPort(addr.IP.String(), strconv.Itoa(p)), time.Now())
+			if peer, ok := s.clients.Load(addr); ok {
+				if loss, ok := parseVideoFeedback(string(buf[:n]), magic, s.session); ok {
+					p := peer.(*videoPeer)
+					now := time.Now()
+					p.lastFeedback.Store(now.UnixNano())
+					p.report.Store(&peerReport{loss, now})
+				}
 			}
 		}
 	}()
 	var seq uint32
 	var bytes int
 	stamp := time.Now()
+	measuredAt := stamp
+	var adaptation videoAdaptation
+	var attempted, failed int
 	for ctx.Err() == nil {
 		select {
 		case <-ctx.Done():
 			return
 		case jpg := <-s.input.ch:
+			now := time.Now()
+			if now.Sub(measuredAt) >= adaptiveInterval {
+				subscribers, loss := 0, -1
+				s.clients.Range(func(_, value any) bool {
+					peer := value.(*videoPeer)
+					if now.Sub(time.Unix(0, peer.lease.Load())) <= 5*time.Second {
+						subscribers++
+						if report := peer.report.Swap(nil); report != nil && now.Sub(report.at) <= 3*time.Second {
+							loss = max(loss, report.loss)
+						} else if last := peer.lastFeedback.Load(); attempted >= 6 && last != 0 && now.Sub(time.Unix(0, last)) > 9*time.Second {
+							// SUBs still arrive. A formerly reporting receiver can
+							// lose the downlink entirely and have no JPEG to report.
+							loss = max(loss, 12)
+						}
+					}
+					return true
+				})
+				if attempted >= 6 && failed > 0 {
+					loss = max(loss, failed*100/attempted)
+				}
+				if s.auto != nil && s.auto() {
+					adaptation.observe(subscribers, loss)
+				} else {
+					adaptation = videoAdaptation{}
+				}
+				s.level.Store(int32(adaptation.level))
+				measuredAt, attempted, failed = now, 0, 0
+			}
+			level := s.currentLevel()
 			seq++
 			count := 0
-			now := time.Now()
 			s.clients.Range(func(key, value any) bool {
-				if now.Sub(value.(time.Time)) > 5*time.Second {
+				if now.Sub(time.Unix(0, value.(*videoPeer).lease.Load())) > 5*time.Second {
 					s.clients.Delete(key)
 					return true
 				}
 				count++
-				to, _ := net.ResolveUDPAddr("udp4", key.(string))
-				_ = fragments(magic, s.session, seq, jpg, func(p []byte) error {
+				attempted++
+				to := key.(netip.AddrPort)
+				// One deadline per frame and client bounds stale work on a slow socket.
+				_ = conn.SetWriteDeadline(time.Now().Add(45 * time.Millisecond))
+				err := fragments(magic, s.session, seq, jpg, func(p []byte) error {
 					if ctx.Err() != nil {
 						return ctx.Err()
 					}
-					_ = conn.SetWriteDeadline(time.Now().Add(20 * time.Millisecond))
-					n, e := conn.WriteToUDP(p, to)
+					n, e := conn.WriteToUDPAddrPort(p, to)
 					bytes += n
 					return e
 				})
+				if err != nil {
+					failed++
+				}
 				return true
 			})
+			if count != 0 {
+				// The same socket also answers FIND while video has no subscribers.
+				_ = conn.SetWriteDeadline(time.Time{})
+			}
 			if now.Sub(stamp) >= time.Second {
-				s.status.Set(fmt.Sprintf("%d клиентов | %.1f Мбит/с", count, float64(bytes)*8/now.Sub(stamp).Seconds()/1e6))
+				text := fmt.Sprintf("%d клиентов | %.1f Мбит/с", count, float64(bytes)*8/now.Sub(stamp).Seconds()/1e6)
+				if level > 0 {
+					text += fmt.Sprintf(" | Авто: %d%% FPS", adaptiveFPS[level])
+				}
+				s.status.Set(text)
 				stamp = now
 				bytes = 0
 			}

@@ -204,7 +204,7 @@ class ScreenWindow:
         self.last_topmost = None
         self.last_placeholder = None
         self.ui_config = self.snapshot()
-        root.title('Экран и звук '+APP_VERSION+' — ' + ROLES[self.role])
+        root.title('VB2Link — Экран и звук '+APP_VERSION+' — ' + ROLES[self.role])
         try:
             root.geometry(saved.get('geometry', '1250x800'))
         except tk.TclError:
@@ -526,7 +526,7 @@ class ScreenWindow:
             return
         if self.pending:
             self.session = ScreenSession(self.pending)
-            self.root.title('Экран и звук '+APP_VERSION+' — ' + ROLES[self.pending['role']])
+            self.root.title('VB2Link — Экран и звук '+APP_VERSION+' — ' + ROLES[self.pending['role']])
             self.pending = None
             self.video_status.set('Запуск…')
         else:

@@ -1,0 +1,30 @@
+{
+  "sender": {
+    "0.1.0-preview.1": {
+      "protocols": ["udp-jpeg-pcm-v1"],
+      "features": ["discovery-v1", "video-feedback-v1"]
+    },
+    "0.1.0-preview.2": {
+      "protocols": ["udp-jpeg-pcm-v1"],
+      "features": ["discovery-v1", "video-feedback-v1"]
+    }
+  },
+  "obs": {
+    "0.1.0-preview.1": {
+      "protocols": ["udp-jpeg-pcm-v1"],
+      "features": []
+    },
+    "0.1.0-preview.2": {
+      "protocols": ["udp-jpeg-pcm-v1"],
+      "features": ["discovery-v1"]
+    },
+    "0.1.0-preview.3": {
+      "protocols": ["udp-jpeg-pcm-v1"],
+      "features": ["discovery-v1", "video-feedback-v1"]
+    },
+    "0.1.0-preview.4": {
+      "protocols": ["udp-jpeg-pcm-v1"],
+      "features": ["discovery-v1", "video-feedback-v1"]
+    }
+  }
+}

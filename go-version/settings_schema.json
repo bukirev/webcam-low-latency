@@ -3,6 +3,8 @@
     "camera": {
       "host": "",
       "quality": 80,
+      "adaptive_video": true,
+      "adaptive_resolution": false,
       "camera": "0",
       "resolution": "1280x720",
       "fps": "30",
@@ -45,6 +47,8 @@
       "max_width": "1920",
       "fps": "30",
       "quality": 80.0,
+      "adaptive_video": true,
+      "adaptive_resolution": false,
       "cursor": true,
       "pause_video": false,
       "preview": true,
@@ -77,6 +81,8 @@
     }
   },
   "camera": [
+    ["Камера на передатчике", "adaptive_video", "Подстраивать видео под связь", "bool"],
+    ["Камера на передатчике", "adaptive_resolution", "Разрешать уменьшение разрешения", "bool"],
     [
       "Камера на передатчике",
       "camera",
@@ -317,6 +323,8 @@
     ]
   ],
   "screen": [
+    ["Передача экрана", "adaptive_video", "Подстраивать видео под связь", "bool"],
+    ["Передача экрана", "adaptive_resolution", "Разрешать уменьшение разрешения", "bool"],
     [
       "Источник экрана",
       "capture_kind",

@@ -1,6 +1,6 @@
-# Мост WebcamGo → OBS Teleport
+# Мост VB2Link → OBS Teleport
 
-На ветке `obs-native` можно использовать [WebcamGo Direct](../../obs-plugin/README.md). Он принимает UDP в процессе OBS.
+На ветке `obs-native` можно использовать [плагин VB2Link](../../obs-plugin/README.md). Он принимает UDP в процессе OBS.
 
 [Панель и приём UDP](../../go-version/obs_windows.go), [упаковка Teleport](../../go-version/teleport.go), [тест полного пути](../../go-version/teleport_windows_test.go), [настройка OBS](../../go-version/OBS.md).
 

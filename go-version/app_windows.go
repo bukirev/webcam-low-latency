@@ -12,7 +12,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
+	"time"
 
+	"github.com/bukirev/webcam-low-latency/go-version/internal/brand"
 	"github.com/lxn/walk"
 	. "github.com/lxn/walk/declarative"
 )
@@ -25,24 +27,33 @@ type Session struct {
 	view                   *Viewer
 	status, audio, network *Status
 	startError             string
+	lastVideo              atomic.Int64
+}
+
+type streamControls struct {
+	status          *walk.TextEdit
+	toggle, preview *walk.PushButton
 }
 
 // Application владеет Walk-виджетами, sessions и черновиками только на UI thread.
 // Рабочие горутины читают ConfigStore и Status, не карты виджетов/форм напрямую.
 type Application struct {
-	window                     *walk.MainWindow
-	tabs                       *walk.TabWidget
-	roleBox                    *walk.ComboBox
-	host                       *walk.LineEdit
-	message                    *walk.Label
-	cameraStatus, screenStatus *walk.TextEdit
-	selectCamera, selectScreen *walk.CheckBox
-	store                      *ConfigStore
-	sessions                   map[string]*Session
-	getters                    map[string]map[string]func() any
-	devices                    map[string][]NamedDevice
-	building                   bool
-	timer                      uintptr
+	window        *walk.MainWindow
+	tabs          *walk.TabWidget
+	roleBox       *walk.ComboBox
+	host          *walk.LineEdit
+	hostRow       *walk.Composite
+	message       *walk.Label
+	economyButton *walk.PushButton
+	streams       map[string]*streamControls
+	advanced      map[string]bool
+	store         *ConfigStore
+	sessions      map[string]*Session
+	getters       map[string]map[string]func() any
+	devices       map[string][]NamedDevice
+	building      bool
+	startHidden   bool
+	timer         uintptr
 }
 
 var roleIDs = []string{"client", "server", "local"}
@@ -70,7 +81,7 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "obs" {
 		if err := runOBSPanel(); err != nil {
 			log.Printf("OBS PANEL ERROR: %v", err)
-			walk.MsgBox(nil, "WebcamGo OBS", err.Error(), walk.MsgBoxIconError)
+			walk.MsgBox(nil, "VB2Link OBS", err.Error(), walk.MsgBoxIconError)
 		}
 		return
 	}
@@ -92,17 +103,21 @@ func main() {
 	if len(os.Args) > 1 && contains(roleIDs, os.Args[1]) {
 		role = os.Args[1]
 	}
-	app := &Application{store: newStore(loadConfig(role)), sessions: map[string]*Session{}, devices: map[string][]NamedDevice{}}
+	splash := brand.ShowSplash()
+	defer splash.Close()
+	app := &Application{store: newStore(loadConfig(role)), sessions: map[string]*Session{}, devices: map[string][]NamedDevice{}, startHidden: true}
 	log.Printf("MODE %s", role)
 	if e := app.create(); e != nil {
 		log.Printf("PANEL ERROR: %v", e)
-		walk.MsgBox(nil, "Webcam Go", e.Error(), walk.MsgBoxIconError)
+		splash.Close()
+		walk.MsgBox(nil, brand.Name, e.Error(), walk.MsgBoxIconError)
 		return
 	}
 	if contains(os.Args[1:], "--autostart") {
 		app.start("camera")
 		app.start("screen")
 	}
+	splash.Reveal(app.window)
 	app.window.Run()
 }
 func (a *Application) create() error {
@@ -113,41 +128,41 @@ func (a *Application) create() error {
 			index = i
 		}
 	}
+	a.streams = map[string]*streamControls{"camera": {}, "screen": {}}
+	a.advanced = make(map[string]bool)
 	a.building = true
-	e := (MainWindow{AssignTo: &a.window, Title: "Webcam Low Latency — " + version, Font: Font{Family: "Segoe UI", PointSize: 10}, MinSize: Size{850, 600}, Size: Size{1100, 820}, Layout: VBox{}, Children: []Widget{
-		Label{Text: "Камера · Экран · Звук — Go", Font: Font{Family: "Segoe UI", PointSize: 15, Bold: true}},
-		Composite{Layout: HBox{}, Children: []Widget{Label{Text: "Режим"}, ComboBox{AssignTo: &a.roleBox, Model: []string{"Приёмник", "Передатчик", "Локальный просмотр"}, CurrentIndex: index, OnCurrentIndexChanged: a.changeRole}, Label{Text: "IP передатчика (пусто — поиск)"}, LineEdit{AssignTo: &a.host, Text: a.store.Get().Host}}},
-		Composite{Layout: HBox{}, Children: []Widget{PushButton{Text: "▶ Запустить выбранное", OnClicked: func() {
-			if a.selectCamera.Checked() {
-				a.start("camera")
-			}
-			if a.selectScreen.Checked() {
-				a.start("screen")
-			}
-		}}, PushButton{Text: "■ Остановить всё", OnClicked: a.stopAll}, PushButton{Text: "Применить", OnClicked: a.apply}, HSpacer{}, PushButton{Text: "Экономия CPU обоим", OnClicked: a.economy}}},
-		Composite{Layout: HBox{}, Children: []Widget{
-			GroupBox{Title: "Камера", Layout: VBox{}, Children: []Widget{CheckBox{AssignTo: &a.selectCamera, Text: "Запускать вместе", Checked: true}, TextEdit{AssignTo: &a.cameraStatus, Text: "Остановлено", ReadOnly: true, VScroll: true, MinSize: Size{280, 72}, MaxSize: Size{0, 72}}, Composite{Layout: HBox{}, Children: []Widget{PushButton{Text: "▶ Старт", OnClicked: func() { a.start("camera") }}, PushButton{Text: "■ Стоп", OnClicked: func() { a.stop("camera") }}, PushButton{Text: "Окно просмотра", OnClicked: func() { a.show("camera") }}, PushButton{Text: "Снимок", OnClicked: func() {
-				if s := a.sessions["camera"]; s != nil && s.view != nil {
-					s.view.Snapshot()
-				}
-			}}}}}},
-			GroupBox{Title: "Экран и звук", Layout: VBox{}, Children: []Widget{CheckBox{AssignTo: &a.selectScreen, Text: "Запускать вместе", Checked: true}, TextEdit{AssignTo: &a.screenStatus, Text: "Остановлено", ReadOnly: true, VScroll: true, MinSize: Size{280, 72}, MaxSize: Size{0, 72}}, Composite{Layout: HBox{}, Children: []Widget{PushButton{Text: "▶ Старт", OnClicked: func() { a.start("screen") }}, PushButton{Text: "■ Стоп", OnClicked: func() { a.stop("screen") }}, PushButton{Text: "Окно просмотра", OnClicked: func() { a.show("screen") }}, PushButton{Text: "Снимок", OnClicked: func() {
-				if s := a.sessions["screen"]; s != nil && s.view != nil {
-					s.view.Snapshot()
-				}
-			}}}}}},
+	e := (MainWindow{AssignTo: &a.window, Title: brand.Name + " — " + version, Visible: !a.startHidden, Font: Font{Family: "Segoe UI", PointSize: 10}, MinSize: Size{630, 505}, Size: Size{740, 620}, Layout: VBox{Margins: Margins{12, 10, 12, 10}, Spacing: 8}, Children: []Widget{
+		brand.Header(brand.Name),
+		Composite{Layout: HBox{MarginsZero: true}, Children: []Widget{
+			Label{Text: "Режим"},
+			ComboBox{AssignTo: &a.roleBox, Model: []string{"Приёмник", "Передатчик", "Локальный просмотр"}, CurrentIndex: index, OnCurrentIndexChanged: a.changeRole},
+			HSpacer{},
+			PushButton{Name: "primary", Text: "Запустить всё", OnClicked: func() { a.startFromPanel("camera", "screen") }},
+			PushButton{Text: "Остановить всё", OnClicked: a.stopAll},
 		}},
-		TabWidget{AssignTo: &a.tabs}, Label{AssignTo: &a.message, Text: "Измените параметры → Применить → Запустить выбранное. Рендер: Direct3D; Python не нужен."},
+		Composite{AssignTo: &a.hostRow, Layout: HBox{MarginsZero: true}, Children: []Widget{
+			Label{Text: "IP передатчика (пусто — поиск)"}, LineEdit{AssignTo: &a.host, Text: a.store.Get().Host},
+		}},
+		TabWidget{AssignTo: &a.tabs, StretchFactor: 1},
+		a.streamRow("camera", "Камера"),
+		a.streamRow("screen", "Экран и звук"),
+		Composite{Layout: HBox{MarginsZero: true}, Children: []Widget{
+			Label{AssignTo: &a.message, EllipsisMode: EllipsisEnd, Text: "Настройте источники и запустите нужные потоки."},
+			PushButton{AssignTo: &a.economyButton, Text: "Экономия CPU", OnClicked: a.economy},
+			PushButton{Name: "primary", Text: "Применить", OnClicked: a.apply},
+		}},
 	}}).Create()
 	if e != nil {
 		return e
 	}
-	a.host.SetEnabled(role == "client")
+	a.updateRoleControls()
 	a.building = false
 	a.refreshDevices()
 	if e = a.forms(a.store.Get()); e != nil {
 		return e
 	}
+	brand.Window(a.window)
+	a.updateStatus()
 	a.window.Closing().Attach(func(cancel *bool, reason walk.CloseReason) {
 		log.Printf("PANEL CLOSE reason=%d", reason)
 		a.stopAll()
@@ -163,6 +178,28 @@ func (a *Application) create() error {
 	panelTimers.Store(hwnd, a)
 	a.timer, _, _ = invoke(syscall.NewLazyDLL("user32.dll").NewProc("SetTimer"), hwnd, 1, 500, panelTimerCallback)
 	return nil
+}
+
+func (a *Application) updateRoleControls() {
+	role := a.store.Get().Role
+	a.hostRow.SetVisible(role == "client")
+	a.economyButton.SetVisible(role != "server")
+}
+
+func (a *Application) streamRow(kind, title string) Widget {
+	row := a.streams[kind]
+	return Composite{Name: "card", Layout: HBox{Margins: Margins{8, 0, 8, 0}}, MinSize: Size{0, 54}, MaxSize: Size{4096, 54}, Children: []Widget{
+		Label{Text: title, MinSize: Size{106, 0}},
+		TextEdit{AssignTo: &row.status, ReadOnly: true, VScroll: true, MinSize: Size{150, 54}, MaxSize: Size{4096, 54}, StretchFactor: 1},
+		PushButton{AssignTo: &row.toggle, Text: "Запустить", MinSize: Size{96, 0}, OnClicked: func() {
+			if s := a.sessions[kind]; s != nil && s.active.Load() {
+				a.stop(kind)
+			} else {
+				a.startFromPanel(kind)
+			}
+		}},
+		PushButton{AssignTo: &row.preview, Text: "Показать", MinSize: Size{94, 0}, OnClicked: func() { a.show(kind) }},
+	}}
 }
 func (a *Application) error(e error) {
 	if e != nil {
@@ -216,10 +253,21 @@ func (a *Application) forms(c Config) error {
 		if tab.kind == "screen" {
 			values = c.Screen
 		}
+		if c.Role == "server" {
+			children, ready := a.senderForm(tab.title, tab.kind, tab.fields, values)
+			if e := a.addTab(tab.title, children); e != nil {
+				return e
+			}
+			ready()
+			continue
+		}
 		groups := map[string][]Widget{}
 		var order []string
 		for _, field := range tab.fields {
 			group, key, label := field[0].(string), field[1].(string), field[2].(string)
+			if key == "adaptive_video" || key == "adaptive_resolution" {
+				continue
+			}
 			if c.Role == "client" && !contains(schema.Client[tab.kind], key) {
 				continue
 			}
@@ -241,7 +289,7 @@ func (a *Application) forms(c Config) error {
 			if key == "block_ms" && c.Role == "client" {
 				label = "Блок вывода, мс"
 			}
-			widget, get := a.fieldWidget(tab.kind, key, label, field[3], values)
+			widget, get := a.fieldWidget(tab.kind, key, label, field[3], values, nil)
 			if _, ok := groups[group]; !ok {
 				order = append(order, group)
 			}
@@ -250,12 +298,7 @@ func (a *Application) forms(c Config) error {
 		}
 		var children []Widget
 		if tab.kind == "screen" {
-			children = append(children, PushButton{Text: "Обновить устройства", OnClicked: func() {
-				draft := a.draft()
-				a.refreshDevices()
-				a.error(a.forms(draft))
-				a.message.SetText("Список устройств обновлён. Нажмите «Применить» после выбора.")
-			}})
+			children = append(children, PushButton{Text: "Обновить устройства", OnClicked: a.reloadDevices})
 		}
 		if tab.title == "Экран" && c.Role != "client" {
 			children = append(children, PushButton{Text: "Выбрать область мышью…", OnClicked: a.selectRegion}, Label{Text: "Выбор на снимке выбранного монитора или ввод координат. Окно захватывается в видимой области."})
@@ -264,14 +307,9 @@ func (a *Application) forms(c Config) error {
 			children = append(children, Label{Text: "MJPG: передача JPEG камеры без повторного сжатия. Аппаратные параметры зависят от драйвера Windows."})
 		}
 		for _, group := range order {
-			children = append(children, GroupBox{Title: group, Layout: VBox{}, Children: groups[group]})
+			children = append(children, brand.Card(group, groups[group]))
 		}
-		var page *walk.TabPage
-		e := (TabPage{AssignTo: &page, Title: tab.title, Layout: VBox{MarginsZero: true}, Children: []Widget{ScrollView{Layout: VBox{}, Children: children}}}).Create(NewBuilder(a.window))
-		if e != nil {
-			return e
-		}
-		if e = a.tabs.Pages().Add(page); e != nil {
+		if e := a.addTab(tab.title, children); e != nil {
 			return e
 		}
 	}
@@ -280,10 +318,31 @@ func (a *Application) forms(c Config) error {
 	}
 	return nil
 }
-func (a *Application) fieldWidget(kind, key, label string, options any, v Values) (Widget, func() any) {
+
+func (a *Application) addTab(title string, children []Widget) error {
+	var page *walk.TabPage
+	e := (TabPage{AssignTo: &page, Title: title, Layout: VBox{MarginsZero: true}, Children: []Widget{ScrollView{Layout: VBox{Spacing: 5}, Children: children}}}).Create(NewBuilder(a.window))
+	if e != nil {
+		return e
+	}
+	if e := a.tabs.Pages().Add(page); e != nil {
+		return e
+	}
+	brand.Apply(page)
+	return nil
+}
+
+func (a *Application) reloadDevices() {
+	draft := a.draft()
+	a.refreshDevices()
+	a.error(a.forms(draft))
+	a.message.SetText("Список устройств обновлён.")
+}
+
+func (a *Application) fieldWidget(kind, key, label string, options any, v Values, change func()) (Widget, func() any) {
 	if _, ok := schema.Defaults[kind][key].(bool); ok {
 		var box *walk.CheckBox
-		return CheckBox{AssignTo: &box, Text: label, Checked: v.Bool(key)}, func() any { return box.Checked() }
+		return CheckBox{AssignTo: &box, Text: label, Checked: v.Bool(key), Alignment: AlignHNearVCenter, OnCheckedChanged: change}, func() any { return box.Checked() }
 	}
 	var input Widget
 	var getter func() any
@@ -327,7 +386,7 @@ func (a *Application) fieldWidget(kind, key, label string, options any, v Values
 					index = i
 				}
 			}
-			input = ComboBox{AssignTo: &box, Model: model, CurrentIndex: index}
+			input = ComboBox{AssignTo: &box, Model: model, CurrentIndex: index, OnCurrentIndexChanged: change}
 			getter = func() any { return box.Text() }
 		}
 	}
@@ -346,7 +405,7 @@ func (a *Application) fieldWidget(kind, key, label string, options any, v Values
 			return value
 		}
 	}
-	return Composite{Layout: Grid{Columns: 2}, Children: []Widget{Label{Text: label, MinSize: Size{260, 0}}, input}}, getter
+	return Composite{Layout: HBox{MarginsZero: true}, Children: []Widget{Label{Text: label, MinSize: Size{198, 0}}, input}}, getter
 }
 
 // draft читает widgets на UI thread и копирует применённые карты.
@@ -373,17 +432,24 @@ func (a *Application) draft() Config {
 // отмены прежнего сеанса. Это не транзакция с подтверждением от всех драйверов.
 func (a *Application) apply() {
 	next := a.draft()
+	if a.applySettings(next) {
+		a.message.SetText("Параметры применены.")
+	}
+}
+
+func (a *Application) applySettings(next Config) bool {
 	if e := validate(next); e != nil {
 		a.error(e)
-		return
+		return false
 	}
 	old := a.store.Get()
 	if e := saveConfig(next); e != nil {
 		a.error(e)
-		return
+		return false
 	}
 	a.store.Set(next)
-	for kind, s := range a.sessions {
+	for _, kind := range []string{"camera", "screen"} {
+		s := a.sessions[kind]
 		if s == nil || !s.active.Load() {
 			continue
 		}
@@ -399,14 +465,22 @@ func (a *Application) apply() {
 			}
 		}
 		if restart {
+			wasPreview := next.Role == "server" && s.view != nil && s.view.previewShown.Load()
 			a.stop(kind)
 			a.start(kind)
+			if wasPreview && a.canPreview(kind) {
+				a.sessions[kind].view.Show()
+			}
 		} else if s.view != nil {
 			s.view.ApplyWindowOptions()
 		}
 	}
-	a.error(a.forms(next))
-	a.message.SetText("Параметры применены.")
+	if e := a.forms(next); e != nil {
+		a.error(e)
+		return false
+	}
+	a.updateStatus()
+	return true
 }
 
 // economy меняет поля формы (20 FPS, decode /2), не store. Единственная точка
@@ -437,9 +511,10 @@ func (a *Application) changeRole() {
 	c := loadConfig(role)
 	a.store.Set(c)
 	a.host.SetText(c.Host)
-	a.host.SetEnabled(role == "client")
+	a.updateRoleControls()
 	a.error(a.forms(c))
-	a.message.SetText("Режим изменён. Настройте параметры и нажмите «Применить».")
+	a.updateStatus()
+	a.message.SetText("Настройте источники и запустите нужные потоки.")
 }
 
 // start создаёт независимый context для камеры либо экрана/звука. Повторный
@@ -479,6 +554,22 @@ func reserveSenderPorts(kind string, c Config) (video, audio *net.UDPConn, err e
 	return video, audio, err
 }
 
+func (a *Application) startFromPanel(kinds ...string) {
+	old := a.store.Get()
+	if old.Role == "server" {
+		next := a.draft()
+		if !reflect.DeepEqual(old, next) && !a.applySettings(next) {
+			return
+		}
+	}
+	for _, kind := range kinds {
+		if s := a.sessions[kind]; s != nil && s.active.Load() {
+			continue
+		}
+		a.start(kind)
+	}
+}
+
 func (a *Application) start(kind string) {
 	log.Printf("START STREAM kind=%s role=%s", kind, a.store.Get().Role)
 	if s := a.sessions[kind]; s != nil && s.active.Load() {
@@ -488,6 +579,11 @@ func (a *Application) start(kind string) {
 		return
 	}
 	c := a.store.Get()
+	if c.Role == "server" && kind == "screen" && !c.Screen.Bool("video_enabled") && !c.Screen.Bool("audio_enabled") {
+		a.sessions[kind] = &Session{startError: "Включите экран или звук в настройках."}
+		a.updateStatus()
+		return
+	}
 	if e := validate(c); e != nil {
 		a.error(e)
 		return
@@ -520,23 +616,39 @@ func (a *Application) start(kind string) {
 	s.view = view
 	a.sessions[kind] = s
 	input := newLatest[[]byte]()
-	go decodeVideo(ctx, input, view, s.status)
+	previewStatus := s.status
+	if c.Role == "server" {
+		previewStatus = view.status
+	}
+	go decodeVideo(ctx, input, view, previewStatus)
+	publishPreview := func(jpg []byte) {
+		if c.Role == "server" {
+			s.lastVideo.Store(time.Now().UnixNano())
+			if !view.previewShown.Load() {
+				return
+			}
+		}
+		input.Put(jpg)
+	}
 	if kind == "camera" {
 		if c.Role == "client" {
 			go receiveVideo(ctx, "WC30", 5001, c.Host, input, s.status)
 		} else {
 			var sender *VideoSender
+			var budget func() int
 			if c.Role == "server" {
 				sender = newVideoSender(s.network)
+				sender.auto = func() bool { return a.store.Get().Camera.Bool("adaptive_video") }
+				budget = sender.currentLevel
 				go sender.runOn(ctx, "WC30", videoConn)
 			}
 			go retryMedia(ctx, func() {
 				captureCamera(ctx, a.store, func(jpg []byte) {
-					input.Put(jpg)
+					publishPreview(jpg)
 					if sender != nil {
 						sender.input.Put(jpg)
 					}
-				}, s.status)
+				}, s.status, budget)
 			})
 		}
 	} else {
@@ -545,17 +657,20 @@ func (a *Application) start(kind string) {
 				go receiveVideo(ctx, "WS40", c.Screen.Int("video_port"), c.Host, input, s.status)
 			} else {
 				var sender *VideoSender
+				var budget func() int
 				if c.Role == "server" {
 					sender = newVideoSender(s.network)
+					sender.auto = func() bool { return a.store.Get().Screen.Bool("adaptive_video") }
+					budget = sender.currentLevel
 					go sender.runOn(ctx, "WS40", videoConn)
 				}
 				go retryMedia(ctx, func() {
 					captureScreen(ctx, a.store, func(jpg []byte) {
-						input.Put(jpg)
+						publishPreview(jpg)
 						if sender != nil {
 							sender.input.Put(jpg)
 						}
-					}, s.status)
+					}, s.status, budget)
 				})
 			}
 		} else {
@@ -571,7 +686,8 @@ func (a *Application) start(kind string) {
 			s.audio.Set("Звук отключён")
 		}
 	}
-	a.message.SetText("Поток запущен. Изменения параметров передаются только кнопкой «Применить».")
+	a.updateStatus()
+	a.message.SetText("Поток запущен.")
 }
 
 // stop сигнализирует отмену и закрывает вид, не блокируя UI ожиданием драйвера.
@@ -589,35 +705,81 @@ func (a *Application) stop(kind string) {
 			s.view.Close()
 		}
 	}
+	a.updateStatus()
 }
 func (a *Application) stopAll() { a.stop("camera"); a.stop("screen") }
-func (a *Application) show(kind string) {
-	if s := a.sessions[kind]; s != nil && s.active.Load() {
-		s.view.Show()
-	} else {
-		a.message.SetText("Сначала запустите нужный поток.")
+
+func (a *Application) canPreview(kind string) bool {
+	s := a.sessions[kind]
+	if s == nil || !s.active.Load() || s.view == nil {
+		return false
 	}
+	c := a.store.Get()
+	return c.Role != "server" || kind == "camera" || c.Screen.Bool("video_enabled")
+}
+
+func (a *Application) show(kind string) {
+	if !a.canPreview(kind) {
+		return
+	}
+	view := a.sessions[kind].view
+	if view.senderPreview && view.previewShown.Load() {
+		view.Hide()
+	} else {
+		view.Show()
+	}
+	a.updateStatus()
 }
 func (a *Application) updateStatus() {
-	for kind, label := range map[string]*walk.TextEdit{"camera": a.cameraStatus, "screen": a.screenStatus} {
+	if a.streams == nil {
+		return
+	}
+	c := a.store.Get()
+	for kind, row := range a.streams {
 		text := "Остановлено"
+		action, preview := "Запустить", "Просмотр"
+		if c.Role == "server" {
+			preview = "Показать"
+		}
 		if s := a.sessions[kind]; s != nil && s.active.Load() {
+			action = "Остановить"
 			text = s.status.Get()
-			if s.network.Get() != "" {
-				text += " | " + s.network.Get()
+			if c.Role == "server" && (kind == "camera" || c.Screen.Bool("video_enabled")) {
+				if last := s.lastVideo.Load(); last != 0 && time.Since(time.Unix(0, last)) < 3*time.Second {
+					text = "Кадры поступают · " + text
+				} else if text != "Запуск…" && !(kind == "screen" && c.Screen.Bool("pause_video")) {
+					text = "Нет кадров · " + text
+				}
 			}
-			if s.view != nil {
-				text += " | " + s.view.status.Get()
+			if network := s.network.Get(); network != "" {
+				text += " | " + network
 			}
-			if s.audio.Get() != "" {
-				text += "\n" + s.audio.Get()
+			if s.view != nil && s.view.previewShown.Load() && c.Role == "server" {
+				preview = "Скрыть"
+			}
+			if audio := s.audio.Get(); audio != "" {
+				text += "\n" + audio
+			}
+			if s.view != nil && (c.Role != "server" || s.view.previewShown.Load()) {
+				if viewStatus := s.view.status.Get(); viewStatus != "" {
+					text += "\n" + viewStatus
+				}
 			}
 		} else if s != nil && s.startError != "" {
 			text = s.startError
 		}
 		text = strings.ReplaceAll(text, "\n", "\r\n")
-		if label.Text() != text {
-			label.SetText(text)
+		if row.status.Text() != text {
+			row.status.SetText(text)
+		}
+		if row.toggle.Text() != action {
+			row.toggle.SetText(action)
+		}
+		if row.preview.Text() != preview {
+			row.preview.SetText(preview)
+		}
+		if enabled := a.canPreview(kind); row.preview.Enabled() != enabled {
+			row.preview.SetEnabled(enabled)
 		}
 	}
 }
