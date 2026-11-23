@@ -1,10 +1,10 @@
 # VB2Link
 
-<img src="https://raw.githubusercontent.com/bukirev/webcam-low-latency/suite-v0.1.0-preview.3/go-version/internal/brand/assets/mark.png" width="96" alt="Логотип VB2Link">
+<img src="https://raw.githubusercontent.com/bukirev/webcam-low-latency/suite-v0.1.0-preview.4/go-version/internal/brand/assets/mark.png" width="96" alt="Логотип VB2Link">
 
 VB2Link передаёт камеру, экран и звук между компьютерами по локальной сети. Единый установщик позволяет выбрать передатчик, приёмник OBS или оба компонента.
 
-**[Скачать VB2Link для Windows x64](https://github.com/bukirev/webcam-low-latency/releases/download/suite-v0.1.0-preview.3/VB2Link-Setup-Windows-x64.exe)** · [Страница релиза](https://github.com/bukirev/webcam-low-latency/releases/tag/suite-v0.1.0-preview.3)
+**[Скачать VB2Link для Windows x64](https://github.com/bukirev/webcam-low-latency/releases/download/suite-v0.1.0-preview.4/VB2Link-Setup-Windows-x64.exe)** · [Страница релиза](https://github.com/bukirev/webcam-low-latency/releases/tag/suite-v0.1.0-preview.4)
 
 [Установка и обновления](https://github.com/bukirev/webcam-low-latency/blob/obs-native/docs/webcamgo-updates.md) · [Плагин OBS](https://github.com/bukirev/webcam-low-latency/tree/obs-native/obs-plugin) · [Документация VB2Link](https://github.com/bukirev/webcam-low-latency/tree/obs-native/docs)
 
