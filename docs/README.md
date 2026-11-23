@@ -24,6 +24,7 @@
 | Область / исходник | Документация | Что изучать |
 |---|---|---|
 | [app_windows.go](../go-version/app_windows.go) | [Панель и сеансы](modules/application.md) | Draft/Apply, роли, запуск, UI thread |
+| [about_windows.go](../go-version/about_windows.go) | [Установка и обновления](webcamgo-updates.md) | Версия приложения и запуск единого обновлятора |
 | [sender_panel_windows.go](../go-version/sender_panel_windows.go) | [Панель передатчика](modules/application.md#панель-передатчика-vb2link) | Компактная форма, условия видимости, предпросмотр |
 | [settings.go](../go-version/settings.go) | [Конфигурация](modules/settings.md) | Схема, миграция, immutable snapshots |
 | [settings_schema.json](../go-version/settings_schema.json) | [Все поля](settings-reference.md) | Defaults, диапазоны, видимость, потребители |

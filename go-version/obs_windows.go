@@ -232,7 +232,7 @@ func runOBSPanel() error {
 		AssignTo: &p.window, Title: "VB2Link — мост OBS", Size: Size{760, 345}, Visible: false,
 		MinSize: Size{720, 280}, Font: Font{Family: "Segoe UI", PointSize: 10}, Layout: VBox{},
 		Children: []Widget{
-			brand.Header("VB2Link OBS"),
+			projectHeader("VB2Link OBS", func() { showAbout(p.window) }),
 			Composite{Layout: Grid{Columns: 2}, Children: []Widget{
 				Label{Text: "IP передатчика (пусто — поиск)"}, LineEdit{AssignTo: &p.host, Text: cfg.Host},
 				Label{Text: "UDP-порт экрана"}, LineEdit{AssignTo: &p.screen, Text: strconv.Itoa(cfg.ScreenPort)},

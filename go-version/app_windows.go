@@ -136,7 +136,7 @@ func (a *Application) create() error {
 	a.advanced = make(map[string]bool)
 	a.building = true
 	e := (MainWindow{AssignTo: &a.window, Title: brand.Name + " — " + version, Visible: !a.startHidden, Font: Font{Family: "Segoe UI", PointSize: 10}, MinSize: Size{630, 505}, Size: Size{740, 620}, Layout: VBox{Margins: Margins{12, 10, 12, 10}, Spacing: 8}, Children: []Widget{
-		brand.Header(brand.Name),
+		projectHeader(brand.Name, func() { showAbout(a.window) }),
 		Composite{Layout: HBox{MarginsZero: true}, Children: []Widget{
 			Label{Text: "Режим"},
 			ComboBox{AssignTo: &a.roleBox, Model: []string{"Приёмник", "Передатчик", "Локальный просмотр"}, CurrentIndex: index, OnCurrentIndexChanged: a.changeRole},

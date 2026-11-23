@@ -104,7 +104,7 @@ func Window(window *walk.MainWindow) {
 func Apply(window walk.Window) {
 	initBrushes()
 	switch w := window.(type) {
-	case *walk.MainWindow:
+	case *walk.MainWindow, *walk.Dialog:
 		w.SetBackground(baseBrush)
 	case *walk.TabPage, *walk.GroupBox:
 		w.SetBackground(panelBrush)

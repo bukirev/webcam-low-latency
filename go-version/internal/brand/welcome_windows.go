@@ -72,7 +72,6 @@ func ShowWelcome(version string) *Welcome {
 		s.Close()
 		return nil
 	}
-	s.window.SetBackground(baseBrush)
 	Apply(s.window)
 	s.window.Closing().Attach(func(cancel *bool, _ walk.CloseReason) { *cancel = !s.ready })
 
