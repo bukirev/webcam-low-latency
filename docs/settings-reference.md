@@ -30,6 +30,7 @@ Camera и Screen — разные namespace: `camera.top` означает bool 
 | `camera.fps` | FPS захвата | `"30"` | 1…120 | нет | captureCamera | Restart камеры на источнике |
 | `camera.codec` | Формат камеры | `"MJPG"` | MJPG, YUY2 | нет | captureCamera | Restart камеры на источнике |
 | `camera.quality` | Качество JPEG | `80` | 30…95 | нет | captureCamera → WIC.EncodeBGRA | Live только encode path; в MJPG скрыто |
+| `camera.camera_port` | UDP-порт камеры | `"5001"` | 1024…65535 | да | receiveVideo (WC30) | Restart камеры, только приёмник |
 | `camera.receive_fps` | Лимит FPS клиента (0 — без лимита) | `"0"` | 0, 15, 20, 25, 30, 60, 120 | да | decodeVideo / Viewer | Live, локальный preview; sender не меняется |
 | `camera.decode_scale` | JPEG 1/N (1 — полное качество) | `"1"` | 1, 2, 4 | да | decodeVideo / Viewer | Live, локальный preview; sender не меняется |
 | `camera.preview` | Показывать изображение | `true` | checkbox | да | decodeVideo / Viewer | Live, локальный preview; sender не меняется |

@@ -27,6 +27,8 @@ def consumer(kind, key):
     if key == 'adaptive_resolution':
         return 'budgetJPEG / WIC.EncodeBGRA', 'Live, передатчик; при включённой адаптации и JPEG-кодировании'
     if kind == 'camera':
+        if key == 'camera_port':
+            return 'receiveVideo (WC30)', 'Restart камеры, только приёмник'
         if key in HARDWARE:
             return 'applyCameraControls (best effort)', 'Скрыто в Go UI; драйвер может не поддерживать'
         if key == 'top':

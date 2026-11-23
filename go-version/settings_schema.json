@@ -6,6 +6,7 @@
       "adaptive_video": true,
       "adaptive_resolution": false,
       "camera": "0",
+      "camera_port": "5001",
       "resolution": "1280x720",
       "fps": "30",
       "codec": "MJPG",
@@ -128,6 +129,12 @@
         30,
         95
       ]
+    ],
+    [
+      "Подключение камеры",
+      "camera_port",
+      "UDP-порт камеры",
+      [1024, 65535]
     ],
     [
       "Приём и нагрузка CPU",
@@ -677,6 +684,7 @@
   "client": {
     "camera": [
       "brightness",
+      "camera_port",
       "contrast",
       "decode_scale",
       "fit",

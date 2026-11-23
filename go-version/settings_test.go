@@ -51,6 +51,24 @@ func TestPanelPreferencesRoundTrip(t *testing.T) {
 	}
 }
 
+func TestReceiverCanSelectAdditionalCameraPort(t *testing.T) {
+	cfg := defaultConfig("client")
+	cfg.Camera["camera_port"] = "5007"
+	if err := validate(cfg); err != nil {
+		t.Fatal(err)
+	}
+	for _, invalid := range []string{"0", "5002", "5007.5", "70000"} {
+		cfg.Camera["camera_port"] = invalid
+		if err := validate(cfg); err == nil {
+			t.Errorf("accepted invalid receiver camera port %q", invalid)
+		}
+	}
+	cfg.Role = "server"
+	if err := validate(cfg); err != nil {
+		t.Fatalf("sender rejected receiver-only settings: %v", err)
+	}
+}
+
 func TestMultipleCameraProfile(t *testing.T) {
 	t.Chdir(t.TempDir())
 	cfg := defaultConfig("server")

@@ -175,7 +175,7 @@ func (a *Application) create() error {
 	}
 	a.updateRoleControls()
 	a.building = false
-	if err := a.refreshDevices(); err != nil {
+	if err := a.refreshDevices(role); err != nil {
 		log.Printf("CAMERA ENUMERATION: %v", err)
 	}
 	if e = a.forms(a.store.Get()); e != nil {
@@ -233,13 +233,16 @@ func (a *Application) error(e error) {
 		walk.MsgBox(a.window, "Проверьте настройки", e.Error(), walk.MsgBoxIconError)
 	}
 }
-func (a *Application) refreshDevices() error {
-	cameras, cameraErr := cameraDevices()
-	a.devices["camera"] = cameras
+func (a *Application) refreshDevices(role string) error {
 	if ds, e := audioDevices(0); e == nil {
 		a.devices["system_device"] = ds
 		a.devices["output_device"] = ds
 	}
+	if role == "client" {
+		return nil
+	}
+	cameras, cameraErr := cameraDevices()
+	a.devices["camera"] = cameras
 	if ds, e := audioDevices(1); e == nil {
 		a.devices["mic_device"] = ds
 	}
@@ -306,7 +309,8 @@ func (a *Application) forms(c Config) error {
 			if key == "adaptive_video" || key == "adaptive_resolution" {
 				continue
 			}
-			if c.Role == "client" && !contains(schema.Client[tab.kind], key) {
+			if c.Role == "client" && !contains(schema.Client[tab.kind], key) ||
+				c.Role != "client" && key == "camera_port" {
 				continue
 			}
 			// The MF source may not expose the old DirectShow control interfaces. Do not
@@ -373,7 +377,7 @@ func (a *Application) addTab(title string, children []Widget) error {
 
 func (a *Application) reloadDevices() {
 	draft := a.draft()
-	cameraErr := a.refreshDevices()
+	cameraErr := a.refreshDevices(draft.Role)
 	if err := a.forms(draft); err != nil {
 		a.error(err)
 		return
@@ -381,6 +385,10 @@ func (a *Application) reloadDevices() {
 	if cameraErr != nil {
 		log.Printf("CAMERA ENUMERATION: %v", cameraErr)
 		a.message.SetText("Не удалось получить список камер. Повторите обновление.")
+		return
+	}
+	if draft.Role == "client" {
+		a.message.SetText("Список устройств воспроизведения обновлён.")
 		return
 	}
 	a.message.SetText(fmt.Sprintf("Список обновлён · доступных камер: %d", len(a.devices["camera"])))
@@ -568,6 +576,9 @@ func (a *Application) applySettings(next Config) bool {
 			continue
 		}
 		restart := old.Host != next.Host
+		if kind == "camera" && next.Role == "client" {
+			restart = restart || old.Camera.Int("camera_port") != next.Camera.Int("camera_port")
+		}
 		if kind == "camera" && next.Role != "client" {
 			restart = restart || cameraCaptureChanged(old.Camera, next.Camera)
 			if next.Role == "server" {
@@ -641,6 +652,9 @@ func (a *Application) changeRole() {
 	a.store.Set(c)
 	a.host.SetText(c.Host)
 	a.updateRoleControls()
+	if err := a.refreshDevices(role); err != nil {
+		log.Printf("CAMERA ENUMERATION: %v", err)
+	}
 	a.error(a.forms(c))
 	a.updateStatus()
 	a.message.SetText("Настройте источники и запустите нужные потоки.")
@@ -710,7 +724,7 @@ func reserveSenderPorts(kind string, c Config) (video, audio *net.UDPConn, err e
 
 func (a *Application) startFromPanel(kinds ...string) {
 	old := a.store.Get()
-	if old.Role == "server" {
+	if old.Role == "server" || (old.Role == "client" && !a.hasActiveStreams()) {
 		next := a.draft()
 		if !reflect.DeepEqual(old, next) && !a.applySettings(next) {
 			return
@@ -725,6 +739,15 @@ func (a *Application) startFromPanel(kinds ...string) {
 		}
 		a.start(kind)
 	}
+}
+
+func (a *Application) hasActiveStreams() bool {
+	for _, session := range a.sessions {
+		if session.active.Load() {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *Application) start(kind string) {
@@ -813,7 +836,7 @@ func (a *Application) start(kind string) {
 	}
 	if kind != "screen" {
 		if c.Role == "client" {
-			go receiveVideo(ctx, "WC30", 5001, c.Host, input, s.status)
+			go receiveVideo(ctx, "WC30", c.Camera.Int("camera_port"), c.Host, input, s.status)
 		} else {
 			var sender *VideoSender
 			var budget func() int

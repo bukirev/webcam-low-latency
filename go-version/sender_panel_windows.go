@@ -64,7 +64,7 @@ func (a *Application) senderForm(title, kind string, fields [][]any, values Valu
 	var left, right, extra, preview []Widget
 	for _, field := range fields {
 		group, key, label := field[0].(string), field[1].(string), field[2].(string)
-		if strings.Contains(group, "Аппаратные") || contains([]string{"preview", "buffer_ms", "output_device", "volume", "receive_mute"}, key) {
+		if strings.Contains(group, "Аппаратные") || contains([]string{"preview", "buffer_ms", "output_device", "volume", "receive_mute", "camera_port"}, key) {
 			continue
 		}
 		switch key {

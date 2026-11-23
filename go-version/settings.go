@@ -242,7 +242,8 @@ func validate(c Config) error {
 		}
 		for _, f := range fs {
 			k := f[1].(string)
-			if c.Role == "client" && !contains(schema.Client[kind], k) {
+			if c.Role == "client" && !contains(schema.Client[kind], k) ||
+				c.Role != "client" && k == "camera_port" {
 				continue
 			}
 			if err := validateField(v, f); err != nil {
@@ -251,8 +252,16 @@ func validate(c Config) error {
 		}
 	}
 	vp, ap := c.Screen.Int("video_port"), c.Screen.Int("audio_port")
-	if vp == ap || vp == 5001 || ap == 5001 {
-		return fmt.Errorf("экран и звук требуют разных портов, кроме 5001")
+	cameraPort := 5001
+	if c.Role == "client" {
+		var err error
+		cameraPort, err = strconv.Atoi(c.Camera.Str("camera_port"))
+		if err != nil {
+			return fmt.Errorf("UDP-порт камеры: нужно целое число")
+		}
+	}
+	if vp == ap || vp == cameraPort || ap == cameraPort {
+		return fmt.Errorf("камера, экран и звук требуют разных UDP-портов")
 	}
 	if c.Role == "server" {
 		used := map[int]bool{vp: true, ap: true}
