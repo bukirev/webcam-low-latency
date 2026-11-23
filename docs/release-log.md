@@ -4,6 +4,23 @@
 
 ## Текущий выпуск Windows x64
 
+[VB2Link 0.1.0-preview.4](https://github.com/bukirev/webcam-low-latency/releases/tag/suite-v0.1.0-preview.4) опубликован 23 ноября 2026 в 10:52:38 UTC+05:00. Тег закреплён на [780cfbc](https://github.com/bukirev/webcam-low-latency/commit/780cfbc76391b23377f79001610e8d97805508e8).
+
+- [Скачать единый установщик](https://github.com/bukirev/webcam-low-latency/releases/download/suite-v0.1.0-preview.4/VB2Link-Setup-Windows-x64.exe).
+- Передатчик **0.1.0-preview.4** открывает единый обновлятор через **О проекте → Открыть обновлятор**. Кнопка есть также в панели моста OBS.
+- Комплектный плагин OBS **0.1.0-preview.4** поставляется с прежним пакетом и лицензиями. При переходе с Preview 3 менеджер заменяет только передатчик.
+
+| Имя файла | Байт | SHA-256 |
+|---|---:|---|
+| `VB2Link-Setup-Windows-x64.exe` | 21336064 | `310976071eed5cb240d61326b6e167d4c5110fdd6264b1f58127ebd8ddb37966` |
+| `WebcamGo-Compatibility.json` | 7880 | `bdcc6e9f92b9d8fe6c3fd4eafd324aa65bd13a7cd530261b54610dccfedbf72f` |
+| `WebcamGo-OBS-Direct-Licenses.zip` | 28288 | `167c16a6d729670905d6cb0a7519b2822272cc3e946b2fd92045da7afe75777f` |
+| `WebcamGo-OBS-Direct-Update-Windows-x64.zip` | 1191842 | `3bfc2efd323b772181e6d7d499a2d14b248a0612370cad8a26164701be28ecd2` |
+| `WebcamGo-Sender-Licenses.zip` | 15200 | `67099fff0db46fcc065235a4529c98e7b7e295ef9df1dfcbcafa6a3c99159357` |
+| `WebcamGo-Sender-Update-Windows-x64.zip` | 7257182 | `26d036feec9e377f06d0e61a42e6944e6a33252433708592b80c9d7aa9f5e3d4` |
+
+## Выпуск 0.1.0-preview.3 для Windows x64
+
 [VB2Link 0.1.0-preview.3](https://github.com/bukirev/webcam-low-latency/releases/tag/suite-v0.1.0-preview.3) опубликован 23 ноября 2026 в 08:34 UTC+05:00. Тег закреплён на [6c8d277](https://github.com/bukirev/webcam-low-latency/commit/6c8d277ff7568c14f49e204f68fc10a187114857).
 
 - [Скачать единый установщик](https://github.com/bukirev/webcam-low-latency/releases/download/suite-v0.1.0-preview.3/VB2Link-Setup-Windows-x64.exe).
@@ -19,7 +36,7 @@
 | `WebcamGo-Sender-Licenses.zip` | 15200 | `67099fff0db46fcc065235a4529c98e7b7e295ef9df1dfcbcafa6a3c99159357` |
 | `WebcamGo-Sender-Update-Windows-x64.zip` | 7196445 | `1dda4c8ac330197eb547e510d1008f87edd54a5d723219dcf963b943b74eb230` |
 
-## Предыдущий выпуск Windows x64
+## Выпуск 0.1.0-preview.2 для Windows x64
 
 [VB2Link 0.1.0-preview.2](https://github.com/bukirev/webcam-low-latency/releases/tag/suite-v0.1.0-preview.2) опубликован 23 ноября 2026 в 00:10:25 UTC+05:00. Тег `suite-v0.1.0-preview.2` закреплён на [8d920f4](https://github.com/bukirev/webcam-low-latency/commit/8d920f4af8bb267dfbded3a5c5afb4719ce4e1c3). В набор входят передатчик **0.1.0-preview.2** и плагин OBS **0.1.0-preview.4**.
 
@@ -65,6 +82,7 @@
 | [suite-v0.1.0-preview.2](https://github.com/bukirev/webcam-low-latency/releases/tag/suite-v0.1.0-preview.2), `8d920f4` | Первый публичный единый установщик, политика совместимости, адаптация и бренд VB2Link. |
 | [4548e73](https://github.com/bukirev/webcam-low-latency/commit/4548e73) | Обновление страницы проекта в ветке `main`. |
 | [suite-v0.1.0-preview.3](https://github.com/bukirev/webcam-low-latency/releases/tag/suite-v0.1.0-preview.3), `6c8d277` | Интерактивная заставка VB2Link и новый пакет передатчика. |
+| [suite-v0.1.0-preview.4](https://github.com/bukirev/webcam-low-latency/releases/tag/suite-v0.1.0-preview.4), `780cfbc` | Окно «О проекте» с запуском единого обновлятора. |
 
 ## Запись следующего выпуска
 
