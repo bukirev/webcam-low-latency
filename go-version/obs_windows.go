@@ -217,7 +217,7 @@ func (p *obsPanel) startBridge() {
 }
 
 func runOBSPanel() error {
-	splash := brand.ShowSplash()
+	splash := brand.ShowWelcome(version)
 	defer splash.Close()
 	c := loadConfig("client")
 	cfg := obsConfig{c.Host, c.Screen.Int("video_port"), c.Screen.Int("audio_port")}

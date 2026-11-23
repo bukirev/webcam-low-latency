@@ -103,7 +103,11 @@ func main() {
 	if len(os.Args) > 1 && contains(roleIDs, os.Args[1]) {
 		role = os.Args[1]
 	}
-	splash := brand.ShowSplash()
+	autostart := contains(os.Args[1:], "--autostart")
+	var splash *brand.Welcome
+	if !autostart {
+		splash = brand.ShowWelcome(version)
+	}
 	defer splash.Close()
 	app := &Application{store: newStore(loadConfig(role)), sessions: map[string]*Session{}, devices: map[string][]NamedDevice{}, startHidden: true}
 	log.Printf("MODE %s", role)
@@ -113,7 +117,7 @@ func main() {
 		walk.MsgBox(nil, brand.Name, e.Error(), walk.MsgBoxIconError)
 		return
 	}
-	if contains(os.Args[1:], "--autostart") {
+	if autostart {
 		app.start("camera")
 		app.start("screen")
 	}
