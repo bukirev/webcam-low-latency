@@ -1,6 +1,6 @@
 # Единая установка и обновления VB2Link
 
-[Скачать единый установщик Windows x64](https://github.com/bukirev/webcam-low-latency/releases/download/suite-v0.1.0-preview.7/VB2Link-Setup-Windows-x64.exe) · [Версии и SHA-256](release-log.md) · [Журнал проверок](verification-log.md)
+[Скачать единый установщик Windows x64](https://github.com/bukirev/webcam-low-latency/releases/download/suite-v0.1.0-preview.8/VB2Link-Setup-Windows-x64.exe) · [Версии и SHA-256](release-log.md) · [Журнал проверок](verification-log.md)
 
 `VB2Link-Setup-Windows-x64.exe` устанавливает передатчик и плагин OBS из одного
 окна. Можно отметить один или оба компонента. Первая установка работает с
@@ -39,6 +39,7 @@
 - `udp-jpeg-pcm-v1` — камера, экран и звук по текущему UDP-протоколу.
 - `discovery-v1` — поиск передатчика по имени.
 - `multi-camera-discovery-v1` — поиск нескольких камер одного ПК и выбор каждой по имени, IP и порту.
+- `lan-source-catalog-v1` — поиск запущенных потоков, включая нестандартные порты, между приложениями VB2Link.
 - `video-feedback-v1` — обратная связь, на которой основана адаптация по потерям.
 
 Для передачи нужен хотя бы один общий протокол. Дополнительные возможности

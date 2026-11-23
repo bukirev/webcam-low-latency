@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"math"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -89,12 +90,42 @@ func init() {
 // Config — снимок применённых параметров. Screen содержит также параметры звука.
 // Host общий для обоих потоков; роли имеют отдельные файлы профилей.
 type Config struct {
-	Role       string          `json:"role"`
-	Host       string          `json:"host"`
-	Camera     Values          `json:"camera"`
-	Screen     Values          `json:"screen"`
-	Cameras    []cameraChannel `json:"cameras,omitempty"`
-	CameraName string          `json:"camera_name,omitempty"`
+	Role            string                    `json:"role"`
+	Host            string                    `json:"host"`
+	Camera          Values                    `json:"camera"`
+	Screen          Values                    `json:"screen"`
+	Cameras         []cameraChannel           `json:"cameras,omitempty"`
+	CameraName      string                    `json:"camera_name,omitempty"`
+	ReceiverSources map[string]receiverSource `json:"receiver_sources,omitempty"`
+}
+
+type receiverSource struct {
+	Endpoint netip.AddrPort `json:"endpoint"`
+	Name     string         `json:"name,omitempty"`
+}
+
+func (c Config) receiverEndpoint(kind string) (string, int) {
+	if source, ok := c.ReceiverSources[kind]; ok && source.Endpoint.IsValid() {
+		return source.Endpoint.Addr().String(), int(source.Endpoint.Port())
+	}
+	return c.Host, c.receiverPort(kind)
+}
+
+func (c Config) receiverPort(kind string) int {
+	switch kind {
+	case "camera":
+		return c.Camera.Int("camera_port")
+	case "screen":
+		return c.Screen.Int("video_port")
+	default:
+		return c.Screen.Int("audio_port")
+	}
+}
+
+func (c Config) receiverEndpointChanged(next Config, kind string) bool {
+	host, port := c.receiverEndpoint(kind)
+	nextHost, nextPort := next.receiverEndpoint(kind)
+	return host != nextHost || port != nextPort
 }
 
 func (c Config) primaryCameraName() string {
@@ -134,6 +165,7 @@ func (c Config) streamKeys() []string {
 func (c Config) clone() Config {
 	c.Camera, c.Screen = c.Camera.Clone(), c.Screen.Clone()
 	c.Cameras = append([]cameraChannel(nil), c.Cameras...)
+	c.ReceiverSources = maps.Clone(c.ReceiverSources)
 	for i := range c.Cameras {
 		c.Cameras[i].Camera = c.Cameras[i].Camera.Clone()
 	}
@@ -167,16 +199,18 @@ func loadConfig(role string) Config {
 	}
 	if b, e := os.ReadFile("settings_go_" + role + ".json"); e == nil {
 		var saved struct {
-			Host           *string
-			Camera, Screen Values
-			Cameras        []cameraChannel
-			CameraName     string `json:"camera_name"`
+			Host            *string
+			Camera, Screen  Values
+			Cameras         []cameraChannel
+			CameraName      string                    `json:"camera_name"`
+			ReceiverSources map[string]receiverSource `json:"receiver_sources"`
 		}
 		if json.Unmarshal(b, &saved) == nil {
 			maps.Copy(c.Camera, saved.Camera)
 			maps.Copy(c.Screen, saved.Screen)
 			c.Cameras = saved.Cameras
 			c.CameraName = saved.CameraName
+			c.ReceiverSources = saved.ReceiverSources
 			for i := range c.Cameras {
 				values := schema.Defaults["camera"].Clone()
 				maps.Copy(values, c.Cameras[i].Camera)
@@ -252,15 +286,24 @@ func validate(c Config) error {
 		}
 	}
 	vp, ap := c.Screen.Int("video_port"), c.Screen.Int("audio_port")
-	cameraPort := 5001
 	if c.Role == "client" {
-		var err error
-		cameraPort, err = strconv.Atoi(c.Camera.Str("camera_port"))
-		if err != nil {
+		if _, err := strconv.Atoi(c.Camera.Str("camera_port")); err != nil {
 			return fmt.Errorf("UDP-порт камеры: нужно целое число")
 		}
-	}
-	if vp == ap || vp == cameraPort || ap == cameraPort {
+		endpoints := make(map[string]bool, 3)
+		for _, kind := range []string{"camera", "screen", "audio"} {
+			if source, ok := c.ReceiverSources[kind]; ok &&
+				(!source.Endpoint.Addr().Is4() || source.Endpoint.Addr().IsUnspecified() || source.Endpoint.Port() == 0) {
+				return fmt.Errorf("недопустимый адрес источника")
+			}
+			host, port := c.receiverEndpoint(kind)
+			key := strings.ToLower(host) + ":" + strconv.Itoa(port)
+			if endpoints[key] {
+				return fmt.Errorf("потоки одного передатчика требуют разных UDP-портов")
+			}
+			endpoints[key] = true
+		}
+	} else if vp == ap || vp == 5001 || ap == 5001 {
 		return fmt.Errorf("камера, экран и звук требуют разных UDP-портов")
 	}
 	if c.Role == "server" {

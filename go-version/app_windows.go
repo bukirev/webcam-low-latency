@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"maps"
 	"net"
 	"os"
 	"reflect"
@@ -54,6 +55,8 @@ type Application struct {
 	getters           map[string]map[string]func() any
 	cameraDrafts      []func() cameraChannel
 	primaryCameraName func() string
+	receiverSources   map[string]receiverSource
+	catalog           *lanCatalog
 	devices           map[string][]NamedDevice
 	building          bool
 	startHidden       bool
@@ -159,7 +162,8 @@ func (a *Application) create() error {
 			PushButton{Text: "Остановить всё", OnClicked: a.stopAll},
 		}},
 		Composite{AssignTo: &a.hostRow, Layout: HBox{MarginsZero: true}, Children: []Widget{
-			Label{Text: "IP передатчика (пусто — поиск)"}, LineEdit{AssignTo: &a.host, Text: a.store.Get().Host},
+			Label{Text: "Общий IP передатчика"}, LineEdit{AssignTo: &a.host, Text: a.store.Get().Host, ToolTipText: "Пустое поле включает автоматический поиск для потоков без выбранного источника."},
+			PushButton{Text: "Найти в сети", OnClicked: a.findReceiverSources},
 		}},
 		TabWidget{AssignTo: &a.tabs, StretchFactor: 1},
 		a.streamRow("camera", "Камера"),
@@ -196,6 +200,7 @@ func (a *Application) create() error {
 	})
 	hwnd := uintptr(a.window.Handle())
 	a.window.Disposing().Attach(func() {
+		a.closeCatalog()
 		panelTimers.Delete(hwnd)
 		if a.timer != 0 {
 			invoke(syscall.NewLazyDLL("user32.dll").NewProc("KillTimer"), hwnd, a.timer)
@@ -207,9 +212,11 @@ func (a *Application) create() error {
 }
 
 func (a *Application) updateRoleControls() {
-	role := a.store.Get().Role
+	cfg := a.store.Get()
+	role := cfg.Role
 	a.hostRow.SetVisible(role == "client")
 	a.economyButton.SetVisible(role != "server")
+	a.configureCatalog(cfg)
 }
 
 func (a *Application) streamRow(kind, title string) Widget {
@@ -276,6 +283,7 @@ func (a *Application) forms(c Config) error {
 	a.getters = map[string]map[string]func() any{"camera": {}, "screen": {}}
 	a.cameraDrafts = nil
 	a.primaryCameraName = nil
+	a.receiverSources = maps.Clone(c.ReceiverSources)
 	for key := range a.streams {
 		if strings.HasPrefix(key, "camera:") {
 			delete(a.streams, key)
@@ -339,6 +347,15 @@ func (a *Application) forms(c Config) error {
 			a.getters[tab.kind][key] = get
 		}
 		var children []Widget
+		if c.Role == "client" {
+			kind := tab.kind
+			if tab.title == "Звук" {
+				kind = "audio"
+			}
+			if selected, ok := c.ReceiverSources[kind]; ok && selected.Endpoint.IsValid() {
+				children = append(children, Label{Text: "Источник в сети · " + receiverSourceLabel(selected), EllipsisMode: EllipsisEnd})
+			}
+		}
 		if tab.kind == "screen" {
 			children = append(children, PushButton{Text: "Обновить устройства", OnClicked: a.reloadDevices})
 		}
@@ -507,6 +524,9 @@ func (a *Application) draft() Config {
 	c.Camera = c.Camera.Clone()
 	c.Screen = c.Screen.Clone()
 	c.Host = strings.TrimSpace(a.host.Text())
+	if c.Role == "client" {
+		c.ReceiverSources = maps.Clone(a.receiverSources)
+	}
 	for kind, fields := range a.getters {
 		target := c.Camera
 		if kind == "screen" {
@@ -552,6 +572,7 @@ func (a *Application) applySettings(next Config) bool {
 		return false
 	}
 	a.store.Set(next)
+	a.configureCatalog(next)
 	var restartKeys []string
 	for kind, s := range a.sessions {
 		prior, extra := old.extraCamera(kind)
@@ -576,8 +597,11 @@ func (a *Application) applySettings(next Config) bool {
 			continue
 		}
 		restart := old.Host != next.Host
-		if kind == "camera" && next.Role == "client" {
-			restart = restart || old.Camera.Int("camera_port") != next.Camera.Int("camera_port")
+		if next.Role == "client" {
+			restart = old.receiverEndpointChanged(next, kind)
+			if kind == "screen" {
+				restart = restart || old.receiverEndpointChanged(next, "audio")
+			}
 		}
 		if kind == "camera" && next.Role != "client" {
 			restart = restart || cameraCaptureChanged(old.Camera, next.Camera)
@@ -836,7 +860,8 @@ func (a *Application) start(kind string) {
 	}
 	if kind != "screen" {
 		if c.Role == "client" {
-			go receiveVideo(ctx, "WC30", c.Camera.Int("camera_port"), c.Host, input, s.status)
+			host, port := c.receiverEndpoint("camera")
+			go receiveVideo(ctx, "WC30", port, host, input, s.status)
 		} else {
 			var sender *VideoSender
 			var budget func() int
@@ -857,7 +882,8 @@ func (a *Application) start(kind string) {
 	} else {
 		if c.Screen.Bool("video_enabled") {
 			if c.Role == "client" {
-				go receiveVideo(ctx, "WS40", c.Screen.Int("video_port"), c.Host, input, s.status)
+				host, port := c.receiverEndpoint("screen")
+				go receiveVideo(ctx, "WS40", port, host, input, s.status)
 			} else {
 				var sender *VideoSender
 				var budget func() int
@@ -942,6 +968,7 @@ func (a *Application) updateStatus() {
 		return
 	}
 	c := a.store.Get()
+	a.publishCatalog(c)
 	for kind, row := range a.streams {
 		text := "Остановлено"
 		action, preview := "Запустить", "Просмотр"

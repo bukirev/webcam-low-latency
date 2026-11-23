@@ -389,7 +389,8 @@ func receiveAudio(ctx context.Context, store *ConfigStore, status *Status) {
 		}
 	}()
 	status.Set("Звук: ожидание передатчика…")
-	go retryMedia(ctx, func() { receiveAudioPackets(ctx, c.Host, c.Screen.Int("audio_port"), input, status) })
+	host, port := c.receiverEndpoint("audio")
+	go retryMedia(ctx, func() { receiveAudioPackets(ctx, host, port, input, status) })
 	var ring *FloatRing
 	for {
 		select {

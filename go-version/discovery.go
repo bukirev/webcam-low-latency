@@ -149,11 +149,15 @@ func searchLANPorts(magic string, ports []uint16, ips []netip.Addr) ([]lanSender
 	for address, name := range found {
 		senders = append(senders, lanSender{address.Addr(), name, address.Port()})
 	}
+	sortLANSources(senders)
+	return senders, nil
+}
+
+func sortLANSources(senders []lanSender) {
 	slices.SortFunc(senders, func(a, b lanSender) int {
 		if byName := strings.Compare(strings.ToLower(a.name), strings.ToLower(b.name)); byName != 0 {
 			return byName
 		}
 		return netip.AddrPortFrom(a.ip, a.port).Compare(netip.AddrPortFrom(b.ip, b.port))
 	})
-	return senders, nil
 }

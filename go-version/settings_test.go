@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net/netip"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -66,6 +67,33 @@ func TestReceiverCanSelectAdditionalCameraPort(t *testing.T) {
 	cfg.Role = "server"
 	if err := validate(cfg); err != nil {
 		t.Fatalf("sender rejected receiver-only settings: %v", err)
+	}
+}
+
+func TestReceiverSourcesMayUseDifferentHostsOnTheSamePort(t *testing.T) {
+	t.Chdir(t.TempDir())
+	cfg := defaultConfig("client")
+	cfg.Host = "192.168.1.31"
+	cfg.ReceiverSources = map[string]receiverSource{
+		"camera": {netip.MustParseAddrPort("192.168.1.32:5002"), "USB"},
+		"screen": {netip.MustParseAddrPort("192.168.1.33:5002"), "Screen"},
+	}
+	if err := validate(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	next := loadConfig("client")
+	if !reflect.DeepEqual(next.ReceiverSources, cfg.ReceiverSources) || cfg.receiverEndpointChanged(next, "screen") {
+		t.Fatalf("restored receiver sources: %+v", next.ReceiverSources)
+	}
+	if host, port := next.receiverEndpoint("audio"); host != cfg.Host || port != 5003 {
+		t.Fatalf("manual audio fallback: %s:%d", host, port)
+	}
+	next.ReceiverSources["screen"] = cfg.ReceiverSources["camera"]
+	if !cfg.receiverEndpointChanged(next, "screen") || validate(next) == nil {
+		t.Fatal("identical endpoint for two feeds was accepted")
 	}
 }
 
