@@ -20,22 +20,30 @@ func cameraDeviceID(devices []NamedDevice, value string) string {
 		}
 	}
 	index, label, labeled := strings.Cut(value, ":")
-	if i, err := strconv.Atoi(index); err == nil && i >= 0 && i < len(devices) {
-		if labeled && !strings.EqualFold(devices[i].Name, strings.TrimSpace(label)) {
-			for _, d := range devices {
-				if strings.EqualFold(d.Name, strings.TrimSpace(label)) {
-					return d.ID
-				}
-			}
+	i, err := strconv.Atoi(index)
+	if err == nil {
+		if len(devices) > i && i >= 0 && (!labeled || strings.EqualFold(devices[i].Name, strings.TrimSpace(label))) {
+			return devices[i].ID
 		}
-		return devices[i].ID
+		if labeled {
+			label = strings.TrimSpace(label)
+		} else {
+			return value
+		}
+	} else {
+		label = value
 	}
 	for _, d := range devices {
-		if strings.EqualFold(d.Name, value) {
+		if strings.EqualFold(d.Name, label) {
 			return d.ID
 		}
 	}
 	return value
+}
+
+func cameraDeviceSelection(devices []NamedDevice, savedID string) (string, int) {
+	id := cameraDeviceID(devices, savedID)
+	return id, slices.IndexFunc(devices, func(device NamedDevice) bool { return device.ID == id })
 }
 
 func (a *Application) addCamera() {

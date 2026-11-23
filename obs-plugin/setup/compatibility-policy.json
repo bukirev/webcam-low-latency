@@ -19,6 +19,10 @@
     "0.1.0-preview.5": {
       "protocols": ["udp-jpeg-pcm-v1"],
       "features": ["discovery-v1", "video-feedback-v1", "multi-camera-discovery-v1"]
+    },
+    "0.1.0-preview.6": {
+      "protocols": ["udp-jpeg-pcm-v1"],
+      "features": ["discovery-v1", "video-feedback-v1", "multi-camera-discovery-v1"]
     }
   },
   "obs": {

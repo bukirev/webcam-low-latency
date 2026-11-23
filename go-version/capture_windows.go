@@ -3,8 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/lxn/win"
+	"log"
 	"math"
+	"math/rand/v2"
 	"runtime"
 	"strconv"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"unsafe"
 
 	"github.com/go-ole/go-ole"
+	"github.com/lxn/win"
 )
 
 var mf = syscall.NewLazyDLL("mfplat.dll")
@@ -27,10 +29,48 @@ var cameraSymbolicLink = guid("{58f0aad8-22bf-4f8a-bb3d-d2c4978c6e2f}")
 var subType = guid("{f7e34c9a-42e8-4714-b74b-cb29d72c35e5}")
 var frameSize = guid("{1652c33d-d6b2-4012-b834-72030849a37d}")
 var frameRate = guid("{c459a2e8-3d2c-4e44-b132-fee5156c7bb0}")
+var frameRateMin = guid("{d2e7558c-dc1f-403f-9a72-d28bb1eb3b5e}")
+var frameRateMax = guid("{e3371d41-b4cf-4a05-bd4e-20b88bb2c4d6}")
 var iidMediaSource = guid("{279a808d-aec7-40c8-9c6b-a6b492c78a66}")
 var mjpgGUID = guid("{47504a4d-0000-0010-8000-00aa00389b71}")
 
 type NamedDevice struct{ ID, Name string }
+
+var mfPlatform struct {
+	sync.Mutex
+	users int
+}
+
+var cameraOwners sync.Map
+
+func retryCamera(ctx context.Context, store *ConfigStore, publish func([]byte), status *Status, budget func() int) {
+	wait := time.Second
+	for ctx.Err() == nil {
+		delivered := false
+		captureCamera(ctx, store, func(frame []byte) {
+			delivered = true
+			publish(frame)
+		}, status, budget)
+		if ctx.Err() != nil {
+			return
+		}
+		if delivered {
+			wait = time.Second
+		}
+		timer := time.NewTimer(wait + time.Duration(rand.IntN(450))*time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+		wait = min(2*wait, 8*time.Second)
+	}
+}
+
+func cameraRate(rate uint64) float64 {
+	return float64(rate>>32) / float64(max(1, uint32(rate)))
+}
 
 // mfStart добавляет к COM-потоку время жизни Media Foundation. defer done
 // должен выполняться после освобождения reader/source и прочих MF-объектов.
@@ -39,12 +79,26 @@ func mfStart() (func(), error) {
 	if e != nil {
 		return nil, e
 	}
-	r, _, _ := invoke(mf.NewProc("MFStartup"), 0x20070, 0)
-	if e = hr(r); e != nil {
-		done()
-		return nil, e
+	mfPlatform.Lock()
+	if mfPlatform.users == 0 {
+		r, _, _ := invoke(mf.NewProc("MFStartup"), 0x20070, 0)
+		if e = hr(r); e != nil {
+			mfPlatform.Unlock()
+			done()
+			return nil, e
+		}
 	}
-	return func() { invoke(mf.NewProc("MFShutdown")); done() }, nil
+	mfPlatform.users++
+	mfPlatform.Unlock()
+	return func() {
+		mfPlatform.Lock()
+		mfPlatform.users--
+		if mfPlatform.users == 0 {
+			invoke(mf.NewProc("MFShutdown"))
+		}
+		mfPlatform.Unlock()
+		done()
+	}, nil
 }
 
 // mfDevices возвращает ссылки IMFActivate, которыми владеет вызывающий код.
@@ -94,25 +148,32 @@ func cameraDevices() ([]NamedDevice, error) {
 	if e != nil {
 		return nil, e
 	}
-	var result []NamedDevice
-	for i, d := range devices {
-		title := cameraAttribute(d, friendly)
-		if title == "" {
-			title = fmt.Sprintf("Камера %d", i+1)
-		}
-		id := cameraAttribute(d, cameraSymbolicLink)
-		if id == "" {
-			id = strconv.Itoa(i)
-		}
-		result = append(result, NamedDevice{id, title})
+	result := describeCameras(devices)
+	for _, d := range devices {
 		release(d)
 	}
 	return result, nil
 }
 
+func describeCameras(devices []uintptr) []NamedDevice {
+	result := make([]NamedDevice, 0, len(devices))
+	for i, d := range devices {
+		name := cameraAttribute(d, friendly)
+		if name == "" {
+			name = fmt.Sprintf("Камера %d", i+1)
+		}
+		id := cameraAttribute(d, cameraSymbolicLink)
+		if id == "" {
+			id = strconv.Itoa(i)
+		}
+		result = append(result, NamedDevice{id, name})
+	}
+	return result
+}
+
 // captureCamera создаёт MF reader на собственном COM-потоке и выбирает ближайший
 // нативный режим с предпочтением codec. В MJPG передаёт копию JPEG, иначе просит
-// RGB32 и кодирует WIC. ReadSample синхронный: context проверяется между чтениями.
+// RGB32 и кодирует WIC. Асинхронный reader допускает отмену и тайм-аут кадра.
 func captureCamera(ctx context.Context, store *ConfigStore, publish func([]byte), status *Status, budget func() int) {
 	done, e := mfStart()
 	if e != nil {
@@ -131,23 +192,25 @@ func captureCamera(ctx context.Context, store *ConfigStore, publish func([]byte)
 		}
 	}()
 	c := store.Get().Camera
-	id := c.Str("camera")
-	index, err := strconv.Atoi(strings.SplitN(id, ":", 2)[0])
-	if err != nil {
-		index = -1
-		if id != "" {
-			for i, device := range devices {
-				if strings.EqualFold(cameraAttribute(device, cameraSymbolicLink), id) {
-					index = i
-					break
-				}
-			}
-		}
-	}
-	if index < 0 || index >= len(devices) {
+	available := describeCameras(devices)
+	id, index := cameraDeviceSelection(available, c.Str("camera"))
+	if index < 0 {
 		status.Set("Выбранная камера недоступна")
 		return
 	}
+	key := strings.ToLower(id)
+	token, _ := cameraOwners.LoadOrStore(key, make(chan struct{}, 1))
+	gate := token.(chan struct{})
+	select {
+	case gate <- struct{}{}:
+		defer func() { <-gate }()
+	case <-ctx.Done():
+		return
+	}
+	if ctx.Err() != nil {
+		return
+	}
+	name := available[index].Name
 	var source uintptr
 	if _, e = com(devices[index], 33, ptr(iidMediaSource), ptr(&source)); e != nil {
 		status.Set(e.Error())
@@ -156,12 +219,25 @@ func captureCamera(ctx context.Context, store *ConfigStore, publish func([]byte)
 	defer release(source)
 	defer func() { _, _ = com(source, 12) }() // IMFMediaSource.Shutdown
 	var reader, attrs uintptr
-	r, _, _ := invoke(mf.NewProc("MFCreateAttributes"), ptr(&attrs), 2)
+	r, _, _ := invoke(mf.NewProc("MFCreateAttributes"), ptr(&attrs), 4)
 	if e = hr(r); e != nil {
 		status.Set(e.Error())
 		return
 	}
 	defer release(attrs)
+	callbackHandle, callback, e := newCameraReaderCallback()
+	if e != nil {
+		status.Set(e.Error())
+		return
+	}
+	defer release(callbackHandle)
+	if _, e = com(attrs, 27, ptr(readerAsyncCallback), callbackHandle); e == nil { // IMFAttributes.SetUnknown
+		_, e = com(attrs, 21, ptr(readerLeavesSourceOpen), 1)
+	}
+	if e != nil {
+		status.Set("Настройка Source Reader: " + e.Error())
+		return
+	}
 	_, _ = com(attrs, 21, ptr(guid("{fb394f3d-ccf1-42ee-bbb3-f9b845d5681d}")), 1)
 	_, _ = com(attrs, 21, ptr(guid("{9c27891a-ed7a-40e1-88e8-b22727a024ee}")), 1)
 	r, _, _ = invoke(mfRead.NewProc("MFCreateSourceReaderFromMediaSource"), source, attrs, ptr(&reader))
@@ -170,13 +246,15 @@ func captureCamera(ctx context.Context, store *ConfigStore, publish func([]byte)
 		return
 	}
 	defer release(reader)
+	defer callback.stop()
 	wantedW, wantedH := 1280, 720
 	_, _ = fmt.Sscanf(c.Str("resolution"), "%dx%d", &wantedW, &wantedH)
 	wantedFPS := c.Num("fps")
 	best := math.Inf(1)
 	var chosen uintptr
 	var width, height int
-	var actualFPS float64
+	var actualFPS, chosenFPS float64
+	var nativeRate uint64
 	isMJPG := false
 	const stream = uintptr(0xfffffffc)
 	for i := 0; i < 500; i++ {
@@ -190,9 +268,16 @@ func captureCamera(ctx context.Context, store *ConfigStore, publish func([]byte)
 		_, _ = com(typ, 8, ptr(frameSize), ptr(&size))
 		_, _ = com(typ, 8, ptr(frameRate), ptr(&rate))
 		w, h := int(size>>32), int(uint32(size))
-		fps := float64(rate>>32) / float64(max(1, uint32(rate)))
+		fps := cameraRate(rate)
+		var minRate, maxRate uint64
+		_, minErr := com(typ, 8, ptr(frameRateMin), ptr(&minRate))
+		_, maxErr := com(typ, 8, ptr(frameRateMax), ptr(&maxRate))
+		targetFPS := fps
+		if minErr == nil && maxErr == nil && cameraRate(minRate) > 0 && cameraRate(maxRate) >= cameraRate(minRate) {
+			targetFPS = max(cameraRate(minRate), min(wantedFPS, cameraRate(maxRate)))
+		}
 		nativeMJPG := sub == *(*[16]byte)(unsafe.Pointer(mjpgGUID))
-		score := math.Abs(float64(w-wantedW)) + math.Abs(float64(h-wantedH)) + math.Abs(fps-wantedFPS)*20
+		score := math.Abs(float64(w-wantedW)) + math.Abs(float64(h-wantedH)) + math.Abs(targetFPS-wantedFPS)*20
 		preferred := nativeMJPG
 		if c.Str("codec") == "YUY2" {
 			preferred = sub == *(*[16]byte)(unsafe.Pointer(guid("{32595559-0000-0010-8000-00aa00389b71}")))
@@ -206,7 +291,7 @@ func captureCamera(ctx context.Context, store *ConfigStore, publish func([]byte)
 			best = score
 			width = w
 			height = h
-			actualFPS = fps
+			actualFPS, chosenFPS, nativeRate = fps, targetFPS, rate
 			isMJPG = nativeMJPG
 		} else {
 			release(typ)
@@ -217,7 +302,21 @@ func captureCamera(ctx context.Context, store *ConfigStore, publish func([]byte)
 		return
 	}
 	defer release(chosen)
-	if _, e = com(reader, 7, stream, 0, chosen); e != nil {
+	requestedRate := false
+	if chosenFPS > 0 && chosenFPS != actualFPS {
+		rate := uint64(math.Round(chosenFPS*1000))<<32 | 1000
+		_, err := com(chosen, 22, ptr(frameRate), rate)
+		requestedRate = err == nil
+	}
+	_, e = com(reader, 7, stream, 0, chosen)
+	if requestedRate {
+		if e == nil {
+			actualFPS = chosenFPS
+		} else if _, restoreErr := com(chosen, 22, ptr(frameRate), nativeRate); restoreErr == nil {
+			_, e = com(reader, 7, stream, 0, chosen)
+		}
+	}
+	if e != nil {
 		status.Set(e.Error())
 		return
 	}
@@ -247,24 +346,31 @@ func captureCamera(ctx context.Context, store *ConfigStore, publish func([]byte)
 	}
 	count := 0
 	stamp := time.Now()
-	credit := 0
+	credit := 0.0
+	publishRatio := min(1, wantedFPS/max(wantedFPS, actualFPS))
 	var previous Values
+	deadline := time.NewTimer(time.Hour)
+	deadline.Stop()
+	log.Printf("CAMERA READER name=%q size=%dx%d native_fps=%.1f requested_fps=%.1f mjpg=%t", name, width, height, actualFPS, wantedFPS, isMJPG)
 	for ctx.Err() == nil {
 		c = store.Get().Camera
 		if previous == nil || previous.Bool("autoexp") != c.Bool("autoexp") || previous.Num("exposure") != c.Num("exposure") || previous.Bool("autofocus") != c.Bool("autofocus") || previous.Num("focus") != c.Num("focus") || previous.Bool("autowb") != c.Bool("autowb") || previous.Num("white") != c.Num("white") {
 			applyCameraControls(source, c)
 			previous = c
 		}
-		var sample uintptr
-		var flags, index uint32
-		var timestamp int64
-		_, e = com(reader, 9, stream, 0, ptr(&index), ptr(&flags), ptr(&timestamp), ptr(&sample))
+		result, e := callback.read(ctx, reader, stream, deadline)
+		sample := result.sample
 		if e != nil {
-			status.Set("Камера: " + e.Error())
+			release(sample)
+			if ctx.Err() == nil {
+				log.Printf("CAMERA READ FAILED name=%q: %v", name, e)
+				status.Set("Камера: " + e.Error() + " · повторное подключение")
+			}
 			return
 		}
-		if flags&2 != 0 {
+		if result.flags&3 != 0 { // MF_SOURCE_READERF_ERROR or ENDOFSTREAM
 			release(sample)
+			log.Printf("CAMERA SOURCE ENDED name=%q flags=0x%x", name, result.flags)
 			status.Set("Камера отключена; повторное подключение…")
 			return
 		}
@@ -282,7 +388,7 @@ func captureCamera(ctx context.Context, store *ConfigStore, publish func([]byte)
 		}
 		// Budget applies to the frames the driver actually produces. Skip before
 		// locking the sample buffer, and keep native MJPG on the passthrough path.
-		credit += adaptiveFPS[level]
+		credit += publishRatio * float64(adaptiveFPS[level])
 		if credit < 100 {
 			release(sample)
 			continue
@@ -326,7 +432,6 @@ func captureCamera(ctx context.Context, store *ConfigStore, publish func([]byte)
 			count = 0
 		}
 	}
-	_, _ = com(reader, 10, stream)
 }
 
 // applyCameraControls пробует старые интерфейсы управления как best effort.

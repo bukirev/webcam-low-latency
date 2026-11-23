@@ -175,7 +175,9 @@ func (a *Application) create() error {
 	}
 	a.updateRoleControls()
 	a.building = false
-	a.refreshDevices()
+	if err := a.refreshDevices(); err != nil {
+		log.Printf("CAMERA ENUMERATION: %v", err)
+	}
 	if e = a.forms(a.store.Get()); e != nil {
 		return e
 	}
@@ -231,10 +233,9 @@ func (a *Application) error(e error) {
 		walk.MsgBox(a.window, "Проверьте настройки", e.Error(), walk.MsgBoxIconError)
 	}
 }
-func (a *Application) refreshDevices() {
-	if ds, e := cameraDevices(); e == nil {
-		a.devices["camera"] = ds
-	}
+func (a *Application) refreshDevices() error {
+	cameras, cameraErr := cameraDevices()
+	a.devices["camera"] = cameras
 	if ds, e := audioDevices(0); e == nil {
 		a.devices["system_device"] = ds
 		a.devices["output_device"] = ds
@@ -248,6 +249,7 @@ func (a *Application) refreshDevices() {
 	}
 	a.devices["monitor"] = ds
 	a.devices["window"] = windowDevices()
+	return cameraErr
 }
 
 // forms перестраивает вкладки одной операцией с приостановленной layout.
@@ -371,9 +373,17 @@ func (a *Application) addTab(title string, children []Widget) error {
 
 func (a *Application) reloadDevices() {
 	draft := a.draft()
-	a.refreshDevices()
-	a.error(a.forms(draft))
-	a.message.SetText("Список устройств обновлён.")
+	cameraErr := a.refreshDevices()
+	if err := a.forms(draft); err != nil {
+		a.error(err)
+		return
+	}
+	if cameraErr != nil {
+		log.Printf("CAMERA ENUMERATION: %v", cameraErr)
+		a.message.SetText("Не удалось получить список камер. Повторите обновление.")
+		return
+	}
+	a.message.SetText(fmt.Sprintf("Список обновлён · доступных камер: %d", len(a.devices["camera"])))
 }
 
 func (a *Application) fieldWidget(kind, key, label string, options any, v Values, compact bool, change func()) (Widget, func() any) {
@@ -387,19 +397,43 @@ func (a *Application) fieldWidget(kind, key, label string, options any, v Values
 	}
 	var input Widget
 	var getter func() any
+	var caption *walk.Label
 	choices, isChoices := options.([]any)
 	if key == "max_width" {
 		input, getter = screenWidthField(v.Str(key))
-	} else if ds, ok := a.devices[key]; ok && (key == "camera" || key == "monitor" || key == "window" || strings.HasSuffix(key, "_device")) {
+	} else if key == "camera" {
+		devices := a.devices[key]
+		saved, index := cameraDeviceSelection(devices, v.Str(key))
+		var box *walk.ComboBox
+		baseLabel := label
+		if index < 0 {
+			if saved == "" {
+				label += " · не выбрана"
+			} else {
+				label += " · недоступна"
+			}
+		}
+		input = ComboBox{AssignTo: &box, Model: devices, BindingMember: "ID", DisplayMember: "Name", CurrentIndex: index,
+			OnCurrentIndexChanged: func() {
+				if caption != nil && box.CurrentIndex() >= 0 {
+					_ = caption.SetText(baseLabel)
+				}
+				if change != nil {
+					change()
+				}
+			}}
+		getter = func() any {
+			if i := box.CurrentIndex(); i >= 0 && i < len(devices) {
+				return devices[i].ID
+			}
+			return saved
+		}
+	} else if ds, ok := a.devices[key]; ok && (key == "monitor" || key == "window" || strings.HasSuffix(key, "_device")) {
 		var box *walk.ComboBox
 		value := v.Str(key)
-		if key == "camera" {
-			value = cameraDeviceID(ds, value)
-		} else {
-			for _, d := range ds {
-				if strings.HasSuffix(value, d.Name) {
-					value = d.ID
-				}
+		for _, d := range ds {
+			if strings.HasSuffix(value, d.Name) {
+				value = d.ID
 			}
 		}
 		found := false
@@ -453,9 +487,9 @@ func (a *Application) fieldWidget(kind, key, label string, options any, v Values
 		}
 	}
 	if compact {
-		return Composite{Layout: VBox{MarginsZero: true, Spacing: 2}, Children: []Widget{Label{Text: label}, input}}, getter
+		return Composite{Layout: VBox{MarginsZero: true, Spacing: 2}, Children: []Widget{Label{AssignTo: &caption, Text: label}, input}}, getter
 	}
-	return Composite{Layout: HBox{MarginsZero: true}, Children: []Widget{Label{Text: label, MinSize: Size{198, 0}}, input}}, getter
+	return Composite{Layout: HBox{MarginsZero: true}, Children: []Widget{Label{AssignTo: &caption, Text: label, MinSize: Size{198, 0}}, input}}, getter
 }
 
 // draft читает widgets на UI thread и копирует применённые карты.
@@ -790,14 +824,12 @@ func (a *Application) start(kind string) {
 				budget = sender.currentLevel
 				go sender.runOn(ctx, "WC30", videoConn)
 			}
-			go retryMedia(ctx, func() {
-				captureCamera(ctx, store, func(jpg []byte) {
-					publishPreview(jpg)
-					if sender != nil {
-						sender.input.Put(jpg)
-					}
-				}, s.status, budget)
-			})
+			go retryCamera(ctx, store, func(jpg []byte) {
+				publishPreview(jpg)
+				if sender != nil {
+					sender.input.Put(jpg)
+				}
+			}, s.status, budget)
 		}
 	} else {
 		if c.Screen.Bool("video_enabled") {
@@ -840,7 +872,7 @@ func (a *Application) start(kind string) {
 
 // stop сигнализирует отмену и закрывает вид, не блокируя UI ожиданием драйвера.
 // При немедленном restart старый worker может ещё освобождать устройство, поэтому
-// источник запускается через retryMedia. Синхронный ReadSample может задержать выход.
+// рабочий цикл ждёт отменяемую повторную попытку и освобождение камеры.
 func (a *Application) stop(kind string) {
 	log.Printf("STOP STREAM kind=%s", kind)
 	if s := a.sessions[kind]; s != nil {
