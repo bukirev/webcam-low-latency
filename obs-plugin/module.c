@@ -1,6 +1,7 @@
 #include "bridge.h"
 #include "_cgo_export.h"
 #include <string.h>
+#include <stdlib.h>
 #include <util/platform.h>
 
 enum feed_kind { CAMERA, SCREEN, AUDIO };
@@ -61,10 +62,25 @@ static void update_input(void *data, obs_data_t *settings)
 		obs_source_set_async_unbuffered(input->source, true);
 	}
 	const char *host = obs_data_get_string(settings, "network_sender");
+	int port = (int)obs_data_get_int(settings, "port");
+	char camera_ip[16];
+	/* Camera discovery saves an IPv4 endpoint. Old scenes store just the IP. */
+	const char *separator = input->kind == CAMERA ? strchr(host, ':') : NULL;
+	if (separator && separator > host && (size_t)(separator - host) < sizeof(camera_ip)) {
+		char *end;
+		long found_port = strtol(separator + 1, &end, 10);
+		if (!*end && found_port > 0 && found_port <= 65535) {
+			size_t n = (size_t)(separator - host);
+			memcpy(camera_ip, host, n);
+			camera_ip[n] = 0;
+			host = camera_ip;
+			port = (int)found_port;
+		}
+	}
 	if (!*host)
 		host = obs_data_get_string(settings, "host");
 	input->worker = webcam_start(input->source, input->kind, (char *)host,
-				     (int)obs_data_get_int(settings, "port"),
+				     port,
 				     (int)obs_data_get_int(settings, "fps_limit"),
 				     (int)obs_data_get_int(settings, "decode_scale"));
 }
@@ -128,6 +144,12 @@ static bool sender_changed(obs_properties_t *props, obs_property_t *prop, obs_da
 	bool visible = !*form->selected;
 	bool refresh = obs_property_visible(manual) != visible;
 	obs_property_set_visible(manual, visible);
+	if (form->kind == CAMERA) {
+		obs_property_t *port = obs_properties_get(props, "port");
+		bool manual_port = strchr(form->selected, ':') == NULL;
+		refresh |= obs_property_visible(port) != manual_port;
+		obs_property_set_visible(port, manual_port);
+	}
 	return keep_selected(prop, form->selected) || refresh;
 }
 

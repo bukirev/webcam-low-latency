@@ -18,7 +18,7 @@ import (
 const vb2linkReleases = "https://github.com/bukirev/webcam-low-latency/releases"
 
 func projectHeader(title string, about func()) Widget {
-	return Composite{Layout: HBox{MarginsZero: true}, Children: []Widget{
+	return Composite{MaxSize: Size{Height: 38}, Layout: HBox{MarginsZero: true}, Children: []Widget{
 		brand.Header(title),
 		PushButton{Text: "О проекте", OnClicked: about},
 	}}

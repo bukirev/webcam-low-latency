@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
+
+	"github.com/go-ole/go-ole"
 )
 
 var mf = syscall.NewLazyDLL("mfplat.dll")
@@ -21,6 +23,7 @@ var mfRead = syscall.NewLazyDLL("mfreadwrite.dll")
 var devType = guid("{c60ac5fe-252a-478f-a0ef-bc8fa5f7cad3}")
 var videoType = guid("{8ac3587a-4ae7-42d8-99e0-0a6013eef90f}")
 var friendly = guid("{60d0e559-52f8-4fa2-bbce-acdb34a8ec01}")
+var cameraSymbolicLink = guid("{58f0aad8-22bf-4f8a-bb3d-d2c4978c6e2f}")
 var subType = guid("{f7e34c9a-42e8-4714-b74b-cb29d72c35e5}")
 var frameSize = guid("{1652c33d-d6b2-4012-b834-72030849a37d}")
 var frameRate = guid("{c459a2e8-3d2c-4e44-b132-fee5156c7bb0}")
@@ -70,8 +73,17 @@ func mfDevices() ([]uintptr, error) {
 	return result, nil
 }
 
-// cameraDevices перечисляет названия без запуска видеозахвата. Индекс — текущий
-// порядок MF, а не стабильный идентификатор USB-камеры после переподключения.
+func cameraAttribute(device uintptr, key *ole.GUID) string {
+	var data *uint16
+	var length uint32
+	if _, err := com(device, 13, ptr(key), ptr(&data), ptr(&length)); err != nil || data == nil {
+		return ""
+	}
+	defer invoke(oleDLL.NewProc("CoTaskMemFree"), uintptr(unsafe.Pointer(data)))
+	return syscall.UTF16ToString(unsafe.Slice(data, int(length)))
+}
+
+// Prefer Media Foundation symbolic links so enumeration order does not swap feeds.
 func cameraDevices() ([]NamedDevice, error) {
 	done, e := mfStart()
 	if e != nil {
@@ -84,15 +96,15 @@ func cameraDevices() ([]NamedDevice, error) {
 	}
 	var result []NamedDevice
 	for i, d := range devices {
-		var name *uint16
-		var n uint32
-		_, err := com(d, 13, ptr(friendly), ptr(&name), ptr(&n))
-		title := "Камера " + strconv.Itoa(i)
-		if err == nil && name != nil {
-			title = syscall.UTF16ToString(unsafe.Slice(name, int(n)+1))
-			invoke(oleDLL.NewProc("CoTaskMemFree"), uintptr(unsafe.Pointer(name)))
+		title := cameraAttribute(d, friendly)
+		if title == "" {
+			title = fmt.Sprintf("Камера %d", i+1)
 		}
-		result = append(result, NamedDevice{strconv.Itoa(i), title})
+		id := cameraAttribute(d, cameraSymbolicLink)
+		if id == "" {
+			id = strconv.Itoa(i)
+		}
+		result = append(result, NamedDevice{id, title})
 		release(d)
 	}
 	return result, nil
@@ -119,7 +131,19 @@ func captureCamera(ctx context.Context, store *ConfigStore, publish func([]byte)
 		}
 	}()
 	c := store.Get().Camera
-	index, _ := strconv.Atoi(strings.Split(c.Str("camera"), ":")[0])
+	id := c.Str("camera")
+	index, err := strconv.Atoi(strings.SplitN(id, ":", 2)[0])
+	if err != nil {
+		index = -1
+		if id != "" {
+			for i, device := range devices {
+				if strings.EqualFold(cameraAttribute(device, cameraSymbolicLink), id) {
+					index = i
+					break
+				}
+			}
+		}
+	}
 	if index < 0 || index >= len(devices) {
 		status.Set("Выбранная камера недоступна")
 		return

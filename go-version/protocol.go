@@ -288,12 +288,13 @@ func receiveVideoOnce(ctx context.Context, magic string, port int, host string, 
 // VideoSender отделяет захват от UDP-отправки почтовым ящиком. clients — sync.Map,
 // потому что чтение SUB и отправка кадров выполняются в разных горутинах.
 type VideoSender struct {
-	input   *Latest[[]byte]
-	status  *Status
-	clients sync.Map
-	session uint64
-	auto    func() bool
-	level   atomic.Int32
+	input          *Latest[[]byte]
+	status         *Status
+	clients        sync.Map
+	session        uint64
+	auto           func() bool
+	level          atomic.Int32
+	discoveryLabel string
 }
 
 type videoPeer struct {
@@ -343,7 +344,10 @@ func (s *VideoSender) runOn(ctx context.Context, magic string, conn *net.UDPConn
 	}()
 	go func() {
 		buf := make([]byte, 256)
-		name := localDiscoveryName()
+		name := s.discoveryLabel
+		if name == "" {
+			name = localDiscoveryName()
+		}
 		for {
 			n, addr, e := conn.ReadFromUDPAddrPort(buf)
 			if e != nil {

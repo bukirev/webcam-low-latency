@@ -4,6 +4,7 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math"
 	"os"
 	"path/filepath"
@@ -59,6 +60,25 @@ type Schema struct {
 
 var schema Schema
 
+const panelSettingsFile = "settings_go_panel.json"
+
+type panelPreferences struct {
+	Role          string          `json:"role"`
+	Tab           int             `json:"tab"`
+	Advanced      map[string]bool `json:"advanced,omitempty"`
+	SenderPreview map[string]bool `json:"sender_preview,omitempty"`
+}
+
+func loadPanelPreferences(name string) panelPreferences {
+	var p panelPreferences
+	if data, err := os.ReadFile(name); err == nil {
+		if json.Unmarshal(data, &p) != nil {
+			return panelPreferences{}
+		}
+	}
+	return p
+}
+
 func init() {
 	b, _ := schemaFS.ReadFile("settings_schema.json")
 	if err := json.Unmarshal(b, &schema); err != nil {
@@ -69,21 +89,66 @@ func init() {
 // Config — снимок применённых параметров. Screen содержит также параметры звука.
 // Host общий для обоих потоков; роли имеют отдельные файлы профилей.
 type Config struct {
-	Role   string `json:"role"`
-	Host   string `json:"host"`
+	Role       string          `json:"role"`
+	Host       string          `json:"host"`
+	Camera     Values          `json:"camera"`
+	Screen     Values          `json:"screen"`
+	Cameras    []cameraChannel `json:"cameras,omitempty"`
+	CameraName string          `json:"camera_name,omitempty"`
+}
+
+func (c Config) primaryCameraName() string {
+	if name := strings.TrimSpace(c.CameraName); name != "" {
+		return name
+	}
+	return "Камера 1"
+}
+
+type cameraChannel struct {
+	Name   string `json:"name"`
+	Port   int    `json:"port"`
 	Camera Values `json:"camera"`
-	Screen Values `json:"screen"`
+}
+
+func (c cameraChannel) key() string { return "camera:" + strconv.Itoa(c.Port) }
+
+func (c Config) extraCamera(key string) (cameraChannel, bool) {
+	for _, channel := range c.Cameras {
+		if channel.key() == key {
+			return channel, true
+		}
+	}
+	return cameraChannel{}, false
+}
+
+func (c Config) streamKeys() []string {
+	keys := []string{"camera", "screen"}
+	if c.Role == "server" {
+		for _, channel := range c.Cameras {
+			keys = append(keys, channel.key())
+		}
+	}
+	return keys
+}
+
+func (c Config) clone() Config {
+	c.Camera, c.Screen = c.Camera.Clone(), c.Screen.Clone()
+	c.Cameras = append([]cameraChannel(nil), c.Cameras...)
+	for i := range c.Cameras {
+		c.Cameras[i].Camera = c.Cameras[i].Camera.Clone()
+	}
+	return c
 }
 
 func defaultConfig(role string) Config {
-	return Config{role, "", schema.Defaults["camera"].Clone(), schema.Defaults["screen"].Clone()}
+	return Config{Role: role, Camera: schema.Defaults["camera"].Clone(), Screen: schema.Defaults["screen"].Clone()}
 }
 
 // loadConfig накладывает старые профили на defaults, затем Go-профиль поверх них.
 // Неизвестные старые ключи отбрасываются; исходные Python-файлы не изменяются.
 func loadConfig(role string) Config {
 	c := defaultConfig(role)
-	// Import previous Python settings only when there is no Go profile yet.
+	// Legacy values supply defaults for keys absent from a Go profile.
 	for kind, target := range map[string]Values{"camera": c.Camera, "screen": c.Screen} {
 		name := "settings_" + role + ".json"
 		if kind == "screen" {
@@ -101,9 +166,28 @@ func loadConfig(role string) Config {
 		}
 	}
 	if b, e := os.ReadFile("settings_go_" + role + ".json"); e == nil {
-		_ = json.Unmarshal(b, &c)
+		var saved struct {
+			Host           *string
+			Camera, Screen Values
+			Cameras        []cameraChannel
+			CameraName     string `json:"camera_name"`
+		}
+		if json.Unmarshal(b, &saved) == nil {
+			maps.Copy(c.Camera, saved.Camera)
+			maps.Copy(c.Screen, saved.Screen)
+			c.Cameras = saved.Cameras
+			c.CameraName = saved.CameraName
+			for i := range c.Cameras {
+				values := schema.Defaults["camera"].Clone()
+				maps.Copy(values, c.Cameras[i].Camera)
+				c.Cameras[i].Camera = values
+			}
+			if saved.Host != nil {
+				c.Host = *saved.Host
+				return c
+			}
+		}
 	}
-	c.Role = role
 	if c.Host == "" {
 		c.Host = c.Camera.Str("host")
 		if c.Host == "" {
@@ -117,12 +201,15 @@ func loadConfig(role string) Config {
 // Это уменьшает риск частичного JSON, но не является гарантией fsync/атомарности
 // на любой файловой системе Windows; ошибки должен обрабатывать вызывающий код.
 func saveConfig(c Config) error {
-	data, e := json.MarshalIndent(c, "", "  ")
+	return saveSettingsJSON("settings_go_"+c.Role+".json", c)
+}
+
+func saveSettingsJSON(name string, value any) error {
+	data, e := json.MarshalIndent(value, "", "  ")
 	if e != nil {
 		return e
 	}
-	name := "settings_go_" + c.Role + ".json"
-	f, e := os.CreateTemp(".", name+".*.tmp")
+	f, e := os.CreateTemp(filepath.Dir(name), filepath.Base(name)+".*.tmp")
 	if e != nil {
 		return e
 	}
@@ -158,27 +245,57 @@ func validate(c Config) error {
 			if c.Role == "client" && !contains(schema.Client[kind], k) {
 				continue
 			}
-			if opts, ok := f[3].([]any); ok && len(opts) > 0 {
-				if lo, ok := opts[0].(float64); ok && len(opts) == 2 {
-					if text, ok := v[k].(string); ok {
-						if _, err := strconv.ParseFloat(text, 64); err != nil {
-							return fmt.Errorf("%s: нужно число", f[2])
-						}
-					}
-					n := v.Num(k)
-					hi := opts[1].(float64)
-					if math.IsNaN(n) || math.IsInf(n, 0) || n < lo || n > hi {
-						return fmt.Errorf("%s: допустимо %g–%g", f[2], lo, hi)
-					}
-				} else if !containsAny(opts, v.Str(k)) {
-					return fmt.Errorf("%s: выберите значение из списка", f[2])
-				}
+			if err := validateField(v, f); err != nil {
+				return err
 			}
 		}
 	}
 	vp, ap := c.Screen.Int("video_port"), c.Screen.Int("audio_port")
 	if vp == ap || vp == 5001 || ap == 5001 {
 		return fmt.Errorf("экран и звук требуют разных портов, кроме 5001")
+	}
+	if c.Role == "server" {
+		used := map[int]bool{vp: true, ap: true}
+		devices := map[string]bool{c.Camera.Str("camera"): true}
+		for _, channel := range c.Cameras {
+			if channel.Port < firstExtraCameraPort || channel.Port > lastExtraCameraPort || used[channel.Port] {
+				return fmt.Errorf("%s: конфликт UDP-порта %d", channel.Name, channel.Port)
+			}
+			if device := channel.Camera.Str("camera"); device != "" {
+				if devices[device] {
+					return fmt.Errorf("%s: выберите отдельное устройство камеры", channel.Name)
+				}
+				devices[device] = true
+			}
+			for _, field := range schema.Camera {
+				if err := validateField(channel.Camera, field); err != nil {
+					return fmt.Errorf("%s: %w", channel.Name, err)
+				}
+			}
+			used[channel.Port] = true
+		}
+	}
+	return nil
+}
+
+func validateField(v Values, field []any) error {
+	key, label := field[1].(string), field[2].(string)
+	opts, ok := field[3].([]any)
+	if !ok || len(opts) == 0 {
+		return nil
+	}
+	if lo, number := opts[0].(float64); number && len(opts) == 2 {
+		if text, ok := v[key].(string); ok {
+			if _, err := strconv.ParseFloat(text, 64); err != nil {
+				return fmt.Errorf("%s: нужно число", label)
+			}
+		}
+		n, hi := v.Num(key), opts[1].(float64)
+		if math.IsNaN(n) || math.IsInf(n, 0) || n < lo || n > hi {
+			return fmt.Errorf("%s: допустимо %g–%g", label, lo, hi)
+		}
+	} else if !containsAny(opts, v.Str(key)) {
+		return fmt.Errorf("%s: выберите значение из списка", label)
 	}
 	return nil
 }
@@ -207,9 +324,7 @@ type ConfigStore struct{ value atomic.Value }
 func newStore(c Config) *ConfigStore { s := &ConfigStore{}; s.Set(c); return s }
 func (s *ConfigStore) Get() Config   { return s.value.Load().(Config) }
 func (s *ConfigStore) Set(c Config) {
-	c.Camera = c.Camera.Clone()
-	c.Screen = c.Screen.Clone()
-	s.value.Store(c)
+	s.value.Store(c.clone())
 }
 
 // executableDirectory делает профили, снимки и журналы относительными к EXE.

@@ -25,7 +25,7 @@ Camera и Screen — разные namespace: `camera.top` означает bool 
 |---|---|---|---|---|---|---|
 | `camera.adaptive_video` | Подстраивать видео под связь | `true` | checkbox | нет | VideoSender / capture loop | Live, передатчик; обратная связь STAT |
 | `camera.adaptive_resolution` | Разрешать уменьшение разрешения | `false` | checkbox | нет | budgetJPEG / WIC.EncodeBGRA | Live, передатчик; при включённой адаптации и JPEG-кодировании |
-| `camera.camera` | Индекс камеры | `"0"` | 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 | нет | captureCamera | Restart камеры на источнике |
+| `camera.camera` | Устройство камеры | `"0"` | Динамический список устройств/окон | нет | captureCamera | Restart камеры на источнике |
 | `camera.resolution` | Разрешение | `"1280x720"` | 640x480, 800x600, 1280x720, 1920x1080, 2560x1440, 3840x2160 | нет | captureCamera | Restart камеры на источнике |
 | `camera.fps` | FPS захвата | `"30"` | 1…120 | нет | captureCamera | Restart камеры на источнике |
 | `camera.codec` | Формат камеры | `"MJPG"` | MJPG, YUY2 | нет | captureCamera | Restart камеры на источнике |

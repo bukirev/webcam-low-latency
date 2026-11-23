@@ -50,6 +50,7 @@ var (
 	subclassCallback                  = syscall.NewCallback(themeMessage)
 	buttons                           = make(map[win.HWND]*walk.PushButton)
 	checks                            = make(map[win.HWND]bool)
+	comboEdits                        = make(map[win.HWND]bool)
 	tabs                              = make(map[win.HWND]*walk.TabWidget)
 )
 
@@ -120,6 +121,13 @@ func Apply(window walk.Window) {
 		w.SetTextColor(textColor)
 	case *walk.ComboBox:
 		win.SetWindowTheme(w.Handle(), windows.StringToUTF16Ptr("DarkMode_CFD"), nil)
+		if edit, _, _ := findWindow.Call(uintptr(w.Handle()), 0, uintptr(unsafe.Pointer(windows.StringToUTF16Ptr("Edit"))), 0); edit != 0 {
+			h := win.HWND(edit)
+			if !comboEdits[h] && subclassParent(h) {
+				comboEdits[h] = true
+				w.Disposing().Attach(func() { delete(comboEdits, h) })
+			}
+		}
 	case *walk.Label:
 		if w.TextColor() == 0 {
 			w.SetTextColor(textColor)
@@ -202,6 +210,12 @@ func themeMessage(hwnd, msg, wp, lp, _, _ uintptr) uintptr {
 		if checks[win.HWND(lp)] {
 			win.SetTextColor(win.HDC(wp), win.COLORREF(textColor))
 			win.SetBkMode(win.HDC(wp), win.TRANSPARENT)
+			return uintptr(panelHandle)
+		}
+	case win.WM_CTLCOLOREDIT:
+		if comboEdits[win.HWND(lp)] {
+			win.SetTextColor(win.HDC(wp), win.COLORREF(textColor))
+			win.SetBkColor(win.HDC(wp), win.COLORREF(panel))
 			return uintptr(panelHandle)
 		}
 	}

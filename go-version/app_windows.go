@@ -8,6 +8,7 @@ import (
 	"os"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -25,6 +26,7 @@ type Session struct {
 	cancel                 context.CancelFunc
 	active                 atomic.Bool
 	view                   *Viewer
+	cameraStore            *ConfigStore
 	status, audio, network *Status
 	startError             string
 	lastVideo              atomic.Int64
@@ -38,22 +40,24 @@ type streamControls struct {
 // Application владеет Walk-виджетами, sessions и черновиками только на UI thread.
 // Рабочие горутины читают ConfigStore и Status, не карты виджетов/форм напрямую.
 type Application struct {
-	window        *walk.MainWindow
-	tabs          *walk.TabWidget
-	roleBox       *walk.ComboBox
-	host          *walk.LineEdit
-	hostRow       *walk.Composite
-	message       *walk.Label
-	economyButton *walk.PushButton
-	streams       map[string]*streamControls
-	advanced      map[string]bool
-	store         *ConfigStore
-	sessions      map[string]*Session
-	getters       map[string]map[string]func() any
-	devices       map[string][]NamedDevice
-	building      bool
-	startHidden   bool
-	timer         uintptr
+	window            *walk.MainWindow
+	tabs              *walk.TabWidget
+	roleBox           *walk.ComboBox
+	host              *walk.LineEdit
+	hostRow           *walk.Composite
+	message           *walk.Label
+	economyButton     *walk.PushButton
+	streams           map[string]*streamControls
+	preferences       panelPreferences
+	store             *ConfigStore
+	sessions          map[string]*Session
+	getters           map[string]map[string]func() any
+	cameraDrafts      []func() cameraChannel
+	primaryCameraName func() string
+	devices           map[string][]NamedDevice
+	building          bool
+	startHidden       bool
+	timer             uintptr
 }
 
 var roleIDs = []string{"client", "server", "local"}
@@ -99,7 +103,11 @@ func main() {
 		}
 		return
 	}
-	role := "client"
+	preferences := loadPanelPreferences(panelSettingsFile)
+	role := preferences.Role
+	if !contains(roleIDs, role) {
+		role = "client"
+	}
 	if len(os.Args) > 1 && contains(roleIDs, os.Args[1]) {
 		role = os.Args[1]
 	}
@@ -109,7 +117,7 @@ func main() {
 		splash = brand.ShowWelcome(version)
 	}
 	defer splash.Close()
-	app := &Application{store: newStore(loadConfig(role)), sessions: map[string]*Session{}, devices: map[string][]NamedDevice{}, startHidden: true}
+	app := &Application{store: newStore(loadConfig(role)), preferences: preferences, sessions: map[string]*Session{}, devices: map[string][]NamedDevice{}, startHidden: true}
 	log.Printf("MODE %s", role)
 	if e := app.create(); e != nil {
 		log.Printf("PANEL ERROR: %v", e)
@@ -118,8 +126,9 @@ func main() {
 		return
 	}
 	if autostart {
-		app.start("camera")
-		app.start("screen")
+		for _, kind := range app.store.Get().streamKeys() {
+			app.start(kind)
+		}
 	}
 	splash.Reveal(app.window)
 	app.window.Run()
@@ -133,15 +142,20 @@ func (a *Application) create() error {
 		}
 	}
 	a.streams = map[string]*streamControls{"camera": {}, "screen": {}}
-	a.advanced = make(map[string]bool)
+	if a.preferences.Advanced == nil {
+		a.preferences.Advanced = make(map[string]bool)
+	}
+	if a.preferences.SenderPreview == nil {
+		a.preferences.SenderPreview = make(map[string]bool)
+	}
 	a.building = true
-	e := (MainWindow{AssignTo: &a.window, Title: brand.Name + " — " + version, Visible: !a.startHidden, Font: Font{Family: "Segoe UI", PointSize: 10}, MinSize: Size{630, 505}, Size: Size{740, 620}, Layout: VBox{Margins: Margins{12, 10, 12, 10}, Spacing: 8}, Children: []Widget{
+	e := (MainWindow{AssignTo: &a.window, Title: brand.Name + " — " + version, Visible: !a.startHidden, Font: Font{Family: "Segoe UI", PointSize: 10}, MinSize: Size{630, 505}, Size: Size{740, 570}, Layout: VBox{Margins: Margins{12, 10, 12, 10}, Spacing: 8}, Children: []Widget{
 		projectHeader(brand.Name, func() { showAbout(a.window) }),
 		Composite{Layout: HBox{MarginsZero: true}, Children: []Widget{
 			Label{Text: "Режим"},
 			ComboBox{AssignTo: &a.roleBox, Model: []string{"Приёмник", "Передатчик", "Локальный просмотр"}, CurrentIndex: index, OnCurrentIndexChanged: a.changeRole},
 			HSpacer{},
-			PushButton{Name: "primary", Text: "Запустить всё", OnClicked: func() { a.startFromPanel("camera", "screen") }},
+			PushButton{Name: "primary", Text: "Запустить всё", OnClicked: func() { a.startFromPanel() }},
 			PushButton{Text: "Остановить всё", OnClicked: a.stopAll},
 		}},
 		Composite{AssignTo: &a.hostRow, Layout: HBox{MarginsZero: true}, Children: []Widget{
@@ -165,12 +179,18 @@ func (a *Application) create() error {
 	if e = a.forms(a.store.Get()); e != nil {
 		return e
 	}
+	if a.preferences.Tab >= 0 && a.preferences.Tab < a.tabs.Pages().Len() {
+		_ = a.tabs.SetCurrentIndex(a.preferences.Tab)
+	}
 	brand.Window(a.window)
 	a.updateStatus()
 	a.window.Closing().Attach(func(cancel *bool, reason walk.CloseReason) {
+		if !a.savePanelState(a.store.Get().Role) {
+			*cancel = true
+			return
+		}
 		log.Printf("PANEL CLOSE reason=%d", reason)
 		a.stopAll()
-		_ = saveConfig(a.store.Get())
 	})
 	hwnd := uintptr(a.window.Handle())
 	a.window.Disposing().Attach(func() {
@@ -192,9 +212,9 @@ func (a *Application) updateRoleControls() {
 
 func (a *Application) streamRow(kind, title string) Widget {
 	row := a.streams[kind]
-	return Composite{Name: "card", Layout: HBox{Margins: Margins{8, 0, 8, 0}}, MinSize: Size{0, 54}, MaxSize: Size{4096, 54}, Children: []Widget{
+	return Composite{Name: "card", Layout: HBox{Margins: Margins{8, 0, 8, 0}}, MinSize: Size{0, 48}, MaxSize: Size{4096, 48}, Children: []Widget{
 		Label{Text: title, MinSize: Size{106, 0}},
-		TextEdit{AssignTo: &row.status, ReadOnly: true, VScroll: true, MinSize: Size{150, 54}, MaxSize: Size{4096, 54}, StretchFactor: 1},
+		TextEdit{AssignTo: &row.status, ReadOnly: true, VScroll: true, MinSize: Size{150, 48}, MaxSize: Size{4096, 48}, StretchFactor: 1},
 		PushButton{AssignTo: &row.toggle, Text: "Запустить", MinSize: Size{96, 0}, OnClicked: func() {
 			if s := a.sessions[kind]; s != nil && s.active.Load() {
 				a.stop(kind)
@@ -249,6 +269,13 @@ func (a *Application) forms(c Config) error {
 		p.Dispose()
 	}
 	a.getters = map[string]map[string]func() any{"camera": {}, "screen": {}}
+	a.cameraDrafts = nil
+	a.primaryCameraName = nil
+	for key := range a.streams {
+		if strings.HasPrefix(key, "camera:") {
+			delete(a.streams, key)
+		}
+	}
 	for _, tab := range []struct {
 		title, kind string
 		fields      [][]any
@@ -259,6 +286,11 @@ func (a *Application) forms(c Config) error {
 		}
 		if c.Role == "server" {
 			children, ready := a.senderForm(tab.title, tab.kind, tab.fields, values)
+			if tab.kind == "camera" {
+				cards := a.cameraCards(c)
+				children = append(append([]Widget{cards[0]}, children[:len(children)-1]...), cards[1:]...)
+				children = append(children, VSpacer{})
+			}
 			if e := a.addTab(tab.title, children); e != nil {
 				return e
 			}
@@ -293,7 +325,7 @@ func (a *Application) forms(c Config) error {
 			if key == "block_ms" && c.Role == "client" {
 				label = "Блок вывода, мс"
 			}
-			widget, get := a.fieldWidget(tab.kind, key, label, field[3], values, nil)
+			widget, get := a.fieldWidget(tab.kind, key, label, field[3], values, false, nil)
 			if _, ok := groups[group]; !ok {
 				order = append(order, group)
 			}
@@ -320,6 +352,7 @@ func (a *Application) forms(c Config) error {
 	if selectedTab >= 0 && selectedTab < a.tabs.Pages().Len() {
 		_ = a.tabs.SetCurrentIndex(selectedTab)
 	}
+	a.updateStatus()
 	return nil
 }
 
@@ -343,20 +376,30 @@ func (a *Application) reloadDevices() {
 	a.message.SetText("Список устройств обновлён.")
 }
 
-func (a *Application) fieldWidget(kind, key, label string, options any, v Values, change func()) (Widget, func() any) {
+func (a *Application) fieldWidget(kind, key, label string, options any, v Values, compact bool, change func()) (Widget, func() any) {
 	if _, ok := schema.Defaults[kind][key].(bool); ok {
 		var box *walk.CheckBox
-		return CheckBox{AssignTo: &box, Text: label, Checked: v.Bool(key), Alignment: AlignHNearVCenter, OnCheckedChanged: change}, func() any { return box.Checked() }
+		check := CheckBox{AssignTo: &box, Text: label, Checked: v.Bool(key), Alignment: AlignHNearVCenter, OnCheckedChanged: change}
+		if compact {
+			return Composite{Layout: HBox{MarginsZero: true}, Children: []Widget{check, HSpacer{}}}, func() any { return box.Checked() }
+		}
+		return check, func() any { return box.Checked() }
 	}
 	var input Widget
 	var getter func() any
 	choices, isChoices := options.([]any)
-	if ds, ok := a.devices[key]; ok && (key == "camera" || key == "monitor" || key == "window" || strings.HasSuffix(key, "_device")) {
+	if key == "max_width" {
+		input, getter = screenWidthField(v.Str(key))
+	} else if ds, ok := a.devices[key]; ok && (key == "camera" || key == "monitor" || key == "window" || strings.HasSuffix(key, "_device")) {
 		var box *walk.ComboBox
 		value := v.Str(key)
-		for _, d := range ds {
-			if strings.HasSuffix(value, d.Name) {
-				value = d.ID
+		if key == "camera" {
+			value = cameraDeviceID(ds, value)
+		} else {
+			for _, d := range ds {
+				if strings.HasSuffix(value, d.Name) {
+					value = d.ID
+				}
 			}
 		}
 		found := false
@@ -409,6 +452,9 @@ func (a *Application) fieldWidget(kind, key, label string, options any, v Values
 			return value
 		}
 	}
+	if compact {
+		return Composite{Layout: VBox{MarginsZero: true, Spacing: 2}, Children: []Widget{Label{Text: label}, input}}, getter
+	}
 	return Composite{Layout: HBox{MarginsZero: true}, Children: []Widget{Label{Text: label, MinSize: Size{198, 0}}, input}}, getter
 }
 
@@ -426,6 +472,18 @@ func (a *Application) draft() Config {
 		}
 		for k, get := range fields {
 			target[k] = get()
+		}
+	}
+	if c.Role == "server" {
+		if a.primaryCameraName != nil {
+			c.CameraName = a.primaryCameraName()
+			if c.CameraName == "Камера 1" {
+				c.CameraName = ""
+			}
+		}
+		c.Cameras = nil
+		for _, get := range a.cameraDrafts {
+			c.Cameras = append(c.Cameras, get())
 		}
 	}
 	return c
@@ -452,15 +510,34 @@ func (a *Application) applySettings(next Config) bool {
 		return false
 	}
 	a.store.Set(next)
-	for _, kind := range []string{"camera", "screen"} {
-		s := a.sessions[kind]
+	var restartKeys []string
+	for kind, s := range a.sessions {
+		prior, extra := old.extraCamera(kind)
+		channel, exists := next.extraCamera(kind)
+		if extra && !exists {
+			a.stop(kind)
+			continue
+		}
 		if s == nil || !s.active.Load() {
+			continue
+		}
+		if extra {
+			if prior.Name != channel.Name || cameraCaptureChanged(prior.Camera, channel.Camera) {
+				a.stop(kind)
+				restartKeys = append(restartKeys, kind)
+			} else {
+				cfg := next
+				cfg.Camera = channel.Camera
+				s.cameraStore.Set(cfg)
+				s.view.ApplyWindowOptions()
+			}
 			continue
 		}
 		restart := old.Host != next.Host
 		if kind == "camera" && next.Role != "client" {
-			for _, k := range []string{"camera", "resolution", "fps", "codec"} {
-				restart = restart || !reflect.DeepEqual(old.Camera[k], next.Camera[k])
+			restart = restart || cameraCaptureChanged(old.Camera, next.Camera)
+			if next.Role == "server" {
+				restart = restart || old.primaryCameraName() != next.primaryCameraName()
 			}
 		}
 		if kind == "screen" {
@@ -469,15 +546,14 @@ func (a *Application) applySettings(next Config) bool {
 			}
 		}
 		if restart {
-			wasPreview := next.Role == "server" && s.view != nil && s.view.previewShown.Load()
 			a.stop(kind)
-			a.start(kind)
-			if wasPreview && a.canPreview(kind) {
-				a.sessions[kind].view.Show()
-			}
+			restartKeys = append(restartKeys, kind)
 		} else if s.view != nil {
 			s.view.ApplyWindowOptions()
 		}
+	}
+	for _, kind := range restartKeys {
+		a.start(kind)
 	}
 	if e := a.forms(next); e != nil {
 		a.error(e)
@@ -485,6 +561,15 @@ func (a *Application) applySettings(next Config) bool {
 	}
 	a.updateStatus()
 	return true
+}
+
+func cameraCaptureChanged(before, after Values) bool {
+	for _, key := range []string{"camera", "resolution", "fps", "codec"} {
+		if !reflect.DeepEqual(before[key], after[key]) {
+			return true
+		}
+	}
+	return false
 }
 
 // economy меняет поля формы (20 FPS, decode /2), не store. Единственная точка
@@ -507,11 +592,17 @@ func (a *Application) changeRole() {
 		return
 	}
 	role := roleIDs[i]
-	if role == a.store.Get().Role {
+	previous := a.store.Get().Role
+	if role == previous {
+		return
+	}
+	if !a.savePanelState(role) {
+		a.building = true
+		_ = a.roleBox.SetCurrentIndex(slices.Index(roleIDs, previous))
+		a.building = false
 		return
 	}
 	a.stopAll()
-	_ = saveConfig(a.store.Get())
 	c := loadConfig(role)
 	a.store.Set(c)
 	a.host.SetText(c.Host)
@@ -519,6 +610,29 @@ func (a *Application) changeRole() {
 	a.error(a.forms(c))
 	a.updateStatus()
 	a.message.SetText("Настройте источники и запустите нужные потоки.")
+}
+
+// Save the next-start values independently of applying them to running workers.
+func (a *Application) savePanelState(nextRole string) bool {
+	draft := a.draft()
+	if !reflect.DeepEqual(draft, a.store.Get()) {
+		err := validate(draft)
+		if err == nil {
+			err = saveConfig(draft)
+		}
+		if err != nil && !continueWithoutSaving(a.window, err) {
+			return false
+		}
+	}
+	a.preferences.Role = nextRole
+	a.preferences.Tab = a.tabs.CurrentIndex()
+	err := saveSettingsJSON(panelSettingsFile, a.preferences)
+	return err == nil || continueWithoutSaving(a.window, err)
+}
+
+func continueWithoutSaving(owner walk.Form, err error) bool {
+	return walk.MsgBox(owner, "Сохранение настроек", err.Error()+"\n\nПродолжить без сохранения этих изменений?",
+		walk.MsgBoxYesNo|walk.MsgBoxIconWarning|walk.MsgBoxDefButton2) == walk.DlgCmdYes
 }
 
 // start создаёт независимый context для камеры либо экрана/звука. Повторный
@@ -534,10 +648,12 @@ func reserveSenderPorts(kind string, c Config) (video, audio *net.UDPConn, err e
 		}
 		return conn, nil
 	}
-	if c.Role == "server" && (kind == "camera" || c.Screen.Bool("video_enabled")) {
+	if c.Role == "server" && (kind != "screen" || c.Screen.Bool("video_enabled")) {
 		port := 5001
 		if kind == "screen" {
 			port = c.Screen.Int("video_port")
+		} else if channel, extra := c.extraCamera(kind); extra {
+			port = channel.Port
 		}
 		video, err = bind(&net.UDPAddr{Port: port})
 		if err != nil {
@@ -566,6 +682,9 @@ func (a *Application) startFromPanel(kinds ...string) {
 			return
 		}
 	}
+	if len(kinds) == 0 {
+		kinds = a.store.Get().streamKeys()
+	}
 	for _, kind := range kinds {
 		if s := a.sessions[kind]; s != nil && s.active.Load() {
 			continue
@@ -583,6 +702,15 @@ func (a *Application) start(kind string) {
 		return
 	}
 	c := a.store.Get()
+	channel, extra := c.extraCamera(kind)
+	if kind != "camera" && kind != "screen" && (!extra || c.Role != "server") {
+		return
+	}
+	if extra && channel.Camera.Str("camera") == "" {
+		a.sessions[kind] = &Session{startError: "Выберите устройство камеры."}
+		a.updateStatus()
+		return
+	}
 	if c.Role == "server" && kind == "screen" && !c.Screen.Bool("video_enabled") && !c.Screen.Bool("audio_enabled") {
 		a.sessions[kind] = &Session{startError: "Включите экран или звук в настройках."}
 		a.updateStatus()
@@ -611,7 +739,16 @@ func (a *Application) start(kind string) {
 			audioConn.Close()
 		}
 	}
-	view, e := newViewer(kind, a.store, func() { s.active.Store(false); s.cancel() })
+	store, title := a.store, ""
+	viewKind := kind
+	if extra {
+		c.Camera = channel.Camera
+		store, title, viewKind = newStore(c), channel.Name, "camera"
+		s.cameraStore = store
+	} else if c.Role == "server" && kind == "camera" {
+		title = c.primaryCameraName()
+	}
+	view, e := newNamedViewer(viewKind, title, store, func() { s.active.Store(false); s.cancel() })
 	if e != nil {
 		s.cancel()
 		a.error(e)
@@ -619,6 +756,12 @@ func (a *Application) start(kind string) {
 	}
 	s.view = view
 	a.sessions[kind] = s
+	if view.senderPreview {
+		view.onPreview = func(shown bool) { a.preferences.SenderPreview[kind] = shown }
+		if a.preferences.SenderPreview[kind] && a.canPreview(kind) {
+			view.Show()
+		}
+	}
 	input := newLatest[[]byte]()
 	previewStatus := s.status
 	if c.Role == "server" {
@@ -634,7 +777,7 @@ func (a *Application) start(kind string) {
 		}
 		input.Put(jpg)
 	}
-	if kind == "camera" {
+	if kind != "screen" {
 		if c.Role == "client" {
 			go receiveVideo(ctx, "WC30", 5001, c.Host, input, s.status)
 		} else {
@@ -642,12 +785,13 @@ func (a *Application) start(kind string) {
 			var budget func() int
 			if c.Role == "server" {
 				sender = newVideoSender(s.network)
-				sender.auto = func() bool { return a.store.Get().Camera.Bool("adaptive_video") }
+				sender.auto = func() bool { return store.Get().Camera.Bool("adaptive_video") }
+				sender.discoveryLabel = discoveryName(localDiscoveryName() + " — " + title)
 				budget = sender.currentLevel
 				go sender.runOn(ctx, "WC30", videoConn)
 			}
 			go retryMedia(ctx, func() {
-				captureCamera(ctx, a.store, func(jpg []byte) {
+				captureCamera(ctx, store, func(jpg []byte) {
 					publishPreview(jpg)
 					if sender != nil {
 						sender.input.Put(jpg)
@@ -711,7 +855,11 @@ func (a *Application) stop(kind string) {
 	}
 	a.updateStatus()
 }
-func (a *Application) stopAll() { a.stop("camera"); a.stop("screen") }
+func (a *Application) stopAll() {
+	for kind := range a.sessions {
+		a.stop(kind)
+	}
+}
 
 func (a *Application) canPreview(kind string) bool {
 	s := a.sessions[kind]
@@ -719,7 +867,7 @@ func (a *Application) canPreview(kind string) bool {
 		return false
 	}
 	c := a.store.Get()
-	return c.Role != "server" || kind == "camera" || c.Screen.Bool("video_enabled")
+	return c.Role != "server" || kind != "screen" || c.Screen.Bool("video_enabled")
 }
 
 func (a *Application) show(kind string) {
@@ -748,7 +896,7 @@ func (a *Application) updateStatus() {
 		if s := a.sessions[kind]; s != nil && s.active.Load() {
 			action = "Остановить"
 			text = s.status.Get()
-			if c.Role == "server" && (kind == "camera" || c.Screen.Bool("video_enabled")) {
+			if c.Role == "server" && (kind != "screen" || c.Screen.Bool("video_enabled")) {
 				if last := s.lastVideo.Load(); last != 0 && time.Since(time.Unix(0, last)) < 3*time.Second {
 					text = "Кадры поступают · " + text
 				} else if text != "Запуск…" && !(kind == "screen" && c.Screen.Bool("pause_video")) {

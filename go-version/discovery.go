@@ -11,11 +11,16 @@ import (
 	"unicode"
 )
 
-const discoveryLimit = 64
+const (
+	discoveryLimit       = 64
+	firstExtraCameraPort = 5004
+	lastExtraCameraPort  = 5010
+)
 
 type lanSender struct {
 	ip   netip.Addr
 	name string
+	port uint16
 }
 
 func discoveryName(name string) string {
@@ -86,6 +91,21 @@ func searchLAN(magic string, port int, ips []netip.Addr) ([]lanSender, error) {
 	if port <= 0 || port > 65535 {
 		return nil, fmt.Errorf("invalid discovery port")
 	}
+	return searchLANPorts(magic, []uint16{uint16(port)}, ips)
+}
+
+func searchCameras(port int, ips []netip.Addr) ([]lanSender, error) {
+	ports := []uint16{5001}
+	for p := uint16(firstExtraCameraPort); p <= lastExtraCameraPort; p++ {
+		ports = append(ports, p)
+	}
+	if port > 0 && port <= 65535 && !slices.Contains(ports, uint16(port)) {
+		ports = append(ports, uint16(port))
+	}
+	return searchLANPorts("WC30", ports, ips)
+}
+
+func searchLANPorts(magic string, ports []uint16, ips []netip.Addr) ([]lanSender, error) {
 	conn, err := net.ListenUDP("udp4", &net.UDPAddr{})
 	if err != nil {
 		return nil, err
@@ -99,15 +119,17 @@ func searchLAN(magic string, port int, ips []netip.Addr) ([]lanSender, error) {
 	probe := []byte(magic + " FIND " + token)
 	prefix := magic + " HERE " + token + " "
 	var sent bool
-	for _, ip := range ips {
-		if _, err = conn.WriteToUDPAddrPort(probe, netip.AddrPortFrom(ip, uint16(port))); err == nil {
-			sent = true
+	for _, port := range ports {
+		for _, ip := range ips {
+			if _, err = conn.WriteToUDPAddrPort(probe, netip.AddrPortFrom(ip, port)); err == nil {
+				sent = true
+			}
 		}
 	}
 	if !sent {
 		return nil, fmt.Errorf("could not send discovery probe: %v", err)
 	}
-	found := make(map[netip.Addr]string)
+	found := make(map[netip.AddrPort]string)
 	var buf [256]byte
 	for len(found) < discoveryLimit {
 		n, from, err := conn.ReadFromUDPAddrPort(buf[:])
@@ -119,19 +141,19 @@ func searchLAN(magic string, port int, ips []netip.Addr) ([]lanSender, error) {
 		}
 		name, ok := strings.CutPrefix(string(buf[:n]), prefix)
 		ip := from.Addr().Unmap()
-		if ok && from.Port() == uint16(port) && ip.Is4() && !ip.IsUnspecified() {
-			found[ip] = discoveryName(name)
+		if ok && slices.Contains(ports, from.Port()) && ip.Is4() && !ip.IsUnspecified() {
+			found[netip.AddrPortFrom(ip, from.Port())] = discoveryName(name)
 		}
 	}
 	senders := make([]lanSender, 0, len(found))
-	for ip, name := range found {
-		senders = append(senders, lanSender{ip, name})
+	for address, name := range found {
+		senders = append(senders, lanSender{address.Addr(), name, address.Port()})
 	}
 	slices.SortFunc(senders, func(a, b lanSender) int {
 		if byName := strings.Compare(strings.ToLower(a.name), strings.ToLower(b.name)); byName != 0 {
 			return byName
 		}
-		return a.ip.Compare(b.ip)
+		return netip.AddrPortFrom(a.ip, a.port).Compare(netip.AddrPortFrom(b.ip, b.port))
 	})
 	return senders, nil
 }

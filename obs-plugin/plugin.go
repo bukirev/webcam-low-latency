@@ -7,6 +7,7 @@ import "C"
 import (
 	"bytes"
 	"context"
+	"net/netip"
 	"runtime"
 	"runtime/cgo"
 	"strings"
@@ -34,19 +35,25 @@ func obs_module_load() C.bool { return C.webcam_module_load() }
 
 //export webcam_discover
 func webcam_discover(kind, port C.int, list *C.obs_property_t) C.int {
-	magic := "WC30"
+	var senders []lanSender
+	var err error
+	ips := lanDiscoveryIPs()
 	switch kind {
 	case 1:
-		magic = "WS40"
+		senders, err = searchLAN("WS40", int(port), ips)
 	case 2:
-		magic = "WA40"
+		senders, err = searchLAN("WA40", int(port), ips)
+	default:
+		senders, err = searchCameras(int(port), ips)
 	}
-	senders, err := searchLAN(magic, int(port), lanDiscoveryIPs())
 	if err != nil {
 		return -1
 	}
 	for _, sender := range senders {
 		ip := sender.ip.String()
+		if kind == 0 {
+			ip = netip.AddrPortFrom(sender.ip, sender.port).String()
+		}
 		label := ip
 		if sender.name != "" {
 			label = sender.name + " (" + ip + ")"

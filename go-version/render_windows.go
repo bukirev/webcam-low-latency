@@ -331,13 +331,20 @@ type Viewer struct {
 	disposing        bool
 	hwnd, canvasHWND win.HWND
 	onClose          func()
+	onPreview        func(bool)
 }
 
 func newViewer(kind string, store *ConfigStore, onClose func()) (*Viewer, error) {
+	return newNamedViewer(kind, "", store, onClose)
+}
+
+func newNamedViewer(kind, title string, store *ConfigStore, onClose func()) (*Viewer, error) {
 	v := &Viewer{kind: kind, store: store, status: &Status{}, onClose: onClose, senderPreview: store.Get().Role == "server"}
-	title := "Камера"
-	if kind == "screen" {
-		title = "Экран и звук"
+	if title == "" {
+		title = "Камера"
+		if kind == "screen" {
+			title = "Экран и звук"
+		}
 	}
 	size := Size{1000, 700}
 	var tools []Widget
@@ -479,10 +486,16 @@ func (v *Viewer) Show() {
 		v.previewShown.Store(true)
 		v.window.Show()
 		v.window.SetFocus()
+		if v.onPreview != nil {
+			v.onPreview(true)
+		}
 	}
 }
 func (v *Viewer) Hide() {
 	v.previewShown.Store(false)
+	if v.onPreview != nil {
+		v.onPreview(false)
+	}
 	v.window.Hide()
 	if v.window.Fullscreen() {
 		_ = v.window.SetFullscreen(false)

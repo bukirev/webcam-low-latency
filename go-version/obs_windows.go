@@ -158,6 +158,7 @@ type obsPanel struct {
 	status              *walk.TextEdit
 	start, stop         *walk.PushButton
 	bridge              *obsBridge
+	saved               obsConfig
 }
 
 func (p *obsPanel) refresh() {
@@ -188,16 +189,34 @@ func (p *obsPanel) stopBridge() {
 	_ = p.status.SetText("Приём остановлен")
 }
 
-func (p *obsPanel) startBridge() {
+func (p *obsPanel) draft() (obsConfig, error) {
 	host := strings.TrimSpace(p.host.Text())
 	screen, err1 := strconv.Atoi(strings.TrimSpace(p.screen.Text()))
 	audio, err2 := strconv.Atoi(strings.TrimSpace(p.audio.Text()))
 	if err1 != nil || err2 != nil || screen < 1024 || screen > 65535 || audio < 1024 || audio > 65535 ||
 		screen == audio || screen == 5001 || audio == 5001 || len(host) > 253 || strings.ContainsAny(host, " \r\n\t") {
-		_ = p.status.SetText("Проверьте адрес и порты. Порты должны быть разными и отличаться от 5001.")
+		return obsConfig{}, fmt.Errorf("проверьте адрес и порты. Порты должны быть разными и отличаться от 5001")
+	}
+	return obsConfig{host, screen, audio}, nil
+}
+
+func (p *obsPanel) save(cfg obsConfig) error {
+	if cfg == p.saved {
+		return nil
+	}
+	if err := saveSettingsJSON(obsSettings, cfg); err != nil {
+		return err
+	}
+	p.saved = cfg
+	return nil
+}
+
+func (p *obsPanel) startBridge() {
+	cfg, err := p.draft()
+	if err != nil {
+		_ = p.status.SetText(err.Error())
 		return
 	}
-	cfg := obsConfig{host, screen, audio}
 	bridge, err := startOBSBridge(cfg, 5001, [3]int{16601, 16602, 16603})
 	if err != nil {
 		_ = p.status.SetText(err.Error())
@@ -210,8 +229,7 @@ func (p *obsPanel) startBridge() {
 		field.SetEnabled(false)
 	}
 	p.refresh()
-	data, _ := json.MarshalIndent(cfg, "", "  ")
-	if err := os.WriteFile(obsSettings, data, 0644); err != nil {
+	if err := p.save(cfg); err != nil {
 		walk.MsgBox(p.window, "Профиль OBS", err.Error(), walk.MsgBoxIconWarning)
 	}
 }
@@ -222,12 +240,12 @@ func runOBSPanel() error {
 	c := loadConfig("client")
 	cfg := obsConfig{c.Host, c.Screen.Int("video_port"), c.Screen.Int("audio_port")}
 	if data, err := os.ReadFile(obsSettings); err == nil {
-		var saved obsConfig
+		saved := cfg
 		if json.Unmarshal(data, &saved) == nil {
 			cfg = saved
 		}
 	}
-	p := &obsPanel{}
+	p := &obsPanel{saved: cfg}
 	err := (MainWindow{
 		AssignTo: &p.window, Title: "VB2Link — мост OBS", Size: Size{760, 345}, Visible: false,
 		MinSize: Size{720, 280}, Font: Font{Family: "Segoe UI", PointSize: 10}, Layout: VBox{},
@@ -249,6 +267,13 @@ func runOBSPanel() error {
 	if err != nil {
 		return err
 	}
+	p.window.Closing().Attach(func(cancel *bool, _ walk.CloseReason) {
+		cfg, err := p.draft()
+		if err == nil {
+			err = p.save(cfg)
+		}
+		*cancel = err != nil && !continueWithoutSaving(p.window, err)
+	})
 	activeOBSPanel = p
 	proc := syscall.NewLazyDLL("user32.dll")
 	hwnd := uintptr(p.window.Handle())
