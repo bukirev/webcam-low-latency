@@ -4,6 +4,23 @@
 
 ## Текущий выпуск Windows x64
 
+[VB2Link 0.1.0-preview.5](https://github.com/bukirev/webcam-low-latency/releases/tag/suite-v0.1.0-preview.5) опубликован 23 ноября 2026 в 11:37:44 UTC+05:00. Тег закреплён на [8ddef96](https://github.com/bukirev/webcam-low-latency/commit/8ddef96e940e8ae4bcc4ad6e09eb1858a7ae1dcc).
+
+- [Скачать единый установщик](https://github.com/bukirev/webcam-low-latency/releases/download/suite-v0.1.0-preview.5/VB2Link-Setup-Windows-x64.exe).
+- Передатчик **0.1.0-preview.5** поддерживает несколько камер с отдельными портами, именами и настройками. Обновлены раскладка настроек, выбор ширины экрана и восстановление параметров при запуске.
+- Плагин OBS **0.1.0-preview.5** различает камеры одного компьютера при поиске. Основная камера сохраняет UDP 5001, дополнительные используют UDP 5004–5010.
+
+| Имя файла | Байт | SHA-256 |
+|---|---:|---|
+| `VB2Link-Setup-Windows-x64.exe` | 21368320 | `5375e1cdc670788b16c4c401b6a4c48507eb241d8604f91b0efcbc17fda22d2e` |
+| `WebcamGo-Compatibility.json` | 9874 | `2445495750b0d53dc84758a4bc6076e2bf90ef4ff8ea2c8f3ac1ec57e95d98e4` |
+| `WebcamGo-OBS-Direct-Licenses.zip` | 28288 | `167c16a6d729670905d6cb0a7519b2822272cc3e946b2fd92045da7afe75777f` |
+| `WebcamGo-OBS-Direct-Update-Windows-x64.zip` | 1195326 | `cf59a84902af30d006397860e3697e1619c742e83194a5b467a0386b73ac0187` |
+| `WebcamGo-Sender-Licenses.zip` | 15200 | `67099fff0db46fcc065235a4529c98e7b7e295ef9df1dfcbcafa6a3c99159357` |
+| `WebcamGo-Sender-Update-Windows-x64.zip` | 7282275 | `786704a251570bd0da734ba17cf6ee1c8e75f4ecc2efbed10fa67f95d8c12400` |
+
+## Выпуск 0.1.0-preview.4 для Windows x64
+
 [VB2Link 0.1.0-preview.4](https://github.com/bukirev/webcam-low-latency/releases/tag/suite-v0.1.0-preview.4) опубликован 23 ноября 2026 в 10:52:38 UTC+05:00. Тег закреплён на [780cfbc](https://github.com/bukirev/webcam-low-latency/commit/780cfbc76391b23377f79001610e8d97805508e8).
 
 - [Скачать единый установщик](https://github.com/bukirev/webcam-low-latency/releases/download/suite-v0.1.0-preview.4/VB2Link-Setup-Windows-x64.exe).
@@ -83,6 +100,7 @@
 | [4548e73](https://github.com/bukirev/webcam-low-latency/commit/4548e73) | Обновление страницы проекта в ветке `main`. |
 | [suite-v0.1.0-preview.3](https://github.com/bukirev/webcam-low-latency/releases/tag/suite-v0.1.0-preview.3), `6c8d277` | Интерактивная заставка VB2Link и новый пакет передатчика. |
 | [suite-v0.1.0-preview.4](https://github.com/bukirev/webcam-low-latency/releases/tag/suite-v0.1.0-preview.4), `780cfbc` | Окно «О проекте» с запуском единого обновлятора. |
+| [suite-v0.1.0-preview.5](https://github.com/bukirev/webcam-low-latency/releases/tag/suite-v0.1.0-preview.5), `8ddef96` | Несколько камер на передатчике и поиск по имени в OBS. Компактная форма и сохранение параметров при выходе. |
 
 ## Запись следующего выпуска
 
