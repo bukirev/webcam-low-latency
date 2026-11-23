@@ -4,7 +4,7 @@
 
 **VB2Link** передаёт камеру, экран и звук по локальной сети. [Единый установщик и обновления](docs/webcamgo-updates.md) · [Настройка плагина OBS](obs-plugin/README.md).
 
-[Скачать единый установщик VB2Link для Windows x64](https://github.com/bukirev/webcam-low-latency/releases/download/suite-v0.1.0-preview.8/VB2Link-Setup-Windows-x64.exe) · [Описание выпуска](https://github.com/bukirev/webcam-low-latency/releases/tag/suite-v0.1.0-preview.8).
+[Скачать единый установщик VB2Link для Windows x64](https://github.com/bukirev/webcam-low-latency/releases/download/suite-v0.1.0-preview.9/VB2Link-Setup-Windows-x64.exe) · [Описание выпуска](https://github.com/bukirev/webcam-low-latency/releases/tag/suite-v0.1.0-preview.9).
 
 [Журнал выпусков и коммитов](docs/release-log.md) · [Журнал проверок](docs/verification-log.md).
 

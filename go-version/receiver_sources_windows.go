@@ -27,7 +27,8 @@ func (a *Application) findReceiverSources() {
 	var cancel, accept *walk.PushButton
 	var fields []Widget
 	var readSelections []func() (string, receiverSource)
-	for _, feed := range []struct{ kind, title string }{{"camera", "Камера"}, {"screen", "Экран"}, {"audio", "Звук"}} {
+	cameraOptions, readCameras := receiverCameraOptions(draft.selectedReceiverCameras(), found["camera"])
+	for _, feed := range []struct{ kind, title string }{{"screen", "Экран"}, {"audio", "Звук"}} {
 		model := []string{"Общий IP и порт из настроек"}
 		options := []receiverSource{{}}
 		saved := draft.ReceiverSources[feed.kind]
@@ -62,6 +63,7 @@ func (a *Application) findReceiverSources() {
 		Font: Font{Family: "Segoe UI", PointSize: 10}, Layout: VBox{},
 		Children: []Widget{
 			Label{Text: summary},
+			cameraOptions,
 			Composite{Layout: Grid{Columns: 2, MarginsZero: true}, Children: fields},
 			Composite{Layout: HBox{MarginsZero: true}, Children: []Widget{
 				HSpacer{},
@@ -81,6 +83,12 @@ func (a *Application) findReceiverSources() {
 			return
 		}
 		draft.ReceiverSources = make(map[string]receiverSource)
+		cameras := readCameras()
+		draft.ReceiverCameras = nil
+		if len(cameras) != 0 {
+			draft.ReceiverSources["camera"] = cameras[0]
+			draft.ReceiverCameras = cameras[1:]
+		}
 		for _, get := range readSelections {
 			kind, source := get()
 			if source.Endpoint.IsValid() {
@@ -97,6 +105,77 @@ func (a *Application) findReceiverSources() {
 	}
 	a.error(a.forms(draft))
 	a.message.SetText("Источники выбраны. Нажмите «Применить» или запустите приём.")
+}
+
+func receiverCameraOptions(saved []receiverSource, found []lanSender) (Widget, func() []receiverSource) {
+	discovered := make(map[netip.AddrPort]receiverSource, len(found))
+	for _, sender := range found {
+		endpoint := netip.AddrPortFrom(sender.ip, sender.port)
+		discovered[endpoint] = receiverSource{Endpoint: endpoint, Name: sender.name}
+	}
+	type choice struct {
+		source receiverSource
+		box    *walk.CheckBox
+	}
+	options := make([]*choice, 0, len(saved)+len(found))
+	var children []Widget
+	add := func(source receiverSource, checked, available bool) {
+		item := &choice{source: source}
+		options = append(options, item)
+		label := receiverSourceLabel(source)
+		if !available {
+			label += " · не найдена"
+		}
+		children = append(children, Composite{Layout: HBox{MarginsZero: true}, Children: []Widget{
+			CheckBox{AssignTo: &item.box, Text: label, Checked: checked, ToolTipText: label}, HSpacer{},
+		}})
+	}
+	for _, source := range saved {
+		if current, ok := discovered[source.Endpoint]; ok {
+			add(current, true, true)
+		} else {
+			add(source, true, false)
+		}
+		delete(discovered, source.Endpoint)
+	}
+	for _, sender := range found {
+		endpoint := netip.AddrPortFrom(sender.ip, sender.port)
+		if source, ok := discovered[endpoint]; ok {
+			add(source, false, true)
+			delete(discovered, endpoint)
+		}
+	}
+	var optionsWidget Widget = Label{Text: "Сетевые камеры не найдены."}
+	if len(children) != 0 {
+		height := min(len(children)*26+12, 150)
+		optionsWidget = ScrollView{
+			MinSize: Size{Height: height}, MaxSize: Size{Height: height},
+			Layout: VBox{Margins: Margins{6, 4, 6, 4}, Spacing: 3}, Children: children,
+		}
+	}
+	return Composite{Layout: VBox{MarginsZero: true, Spacing: 4}, Children: []Widget{
+		Label{Text: "Камеры · отметьте нужные"},
+		optionsWidget,
+		Label{Text: "Если камер не выбрано, используются общий IP и порт камеры."},
+	}}, func() []receiverSource {
+		var selected []receiverSource
+		for _, item := range options {
+			if item.box.Checked() {
+				selected = append(selected, item.source)
+			}
+		}
+		return selected
+	}
+}
+
+func (a *Application) receiverCameraCards(cfg Config) []Widget {
+	var cards []Widget
+	for _, source := range cfg.selectedReceiverCameras() {
+		key := source.cameraKey()
+		a.streams[key] = &streamControls{}
+		cards = append(cards, brand.Card(receiverSourceLabel(source), []Widget{a.streamRow(key, "")}))
+	}
+	return cards
 }
 
 func (a *Application) configureCatalog(c Config) {

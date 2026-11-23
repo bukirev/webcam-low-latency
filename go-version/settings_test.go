@@ -97,6 +97,37 @@ func TestReceiverSourcesMayUseDifferentHostsOnTheSamePort(t *testing.T) {
 	}
 }
 
+func TestReceiverCameraSelectionSurvivesProfileRoundTrip(t *testing.T) {
+	t.Chdir(t.TempDir())
+	cfg := defaultConfig("client")
+	first := receiverSource{netip.MustParseAddrPort("192.168.1.11:5001"), "Main"}
+	second := receiverSource{netip.MustParseAddrPort("192.168.1.11:5004"), "USB"}
+	third := receiverSource{netip.MustParseAddrPort("192.168.1.12:5001"), "Second PC"}
+	cfg.ReceiverSources = map[string]receiverSource{"camera": first}
+	// A Preview 8 profile needs no migration step before it yields a camera.
+	if got := cfg.streamKeys(); !reflect.DeepEqual(got, []string{first.cameraKey(), "screen"}) {
+		t.Fatalf("legacy selection stream keys = %v", got)
+	}
+	cfg.ReceiverCameras = []receiverSource{second, third}
+	if err := validate(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	saved := loadConfig("client")
+	if got := saved.streamKeys(); !reflect.DeepEqual(got, []string{first.cameraKey(), second.cameraKey(), third.cameraKey(), "screen"}) {
+		t.Fatalf("restored stream keys = %v", got)
+	}
+	if selected, ok := saved.receiverCamera(third.cameraKey()); !ok || selected != third {
+		t.Fatalf("third camera = %v, %v", selected, ok)
+	}
+	saved.ReceiverCameras = append(saved.ReceiverCameras, first)
+	if validate(saved) == nil {
+		t.Fatal("accepted the same camera twice")
+	}
+}
+
 func TestMultipleCameraProfile(t *testing.T) {
 	t.Chdir(t.TempDir())
 	cfg := defaultConfig("server")

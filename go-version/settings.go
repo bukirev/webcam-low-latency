@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -97,11 +98,38 @@ type Config struct {
 	Cameras         []cameraChannel           `json:"cameras,omitempty"`
 	CameraName      string                    `json:"camera_name,omitempty"`
 	ReceiverSources map[string]receiverSource `json:"receiver_sources,omitempty"`
+	ReceiverCameras []receiverSource          `json:"receiver_cameras,omitempty"`
 }
 
 type receiverSource struct {
 	Endpoint netip.AddrPort `json:"endpoint"`
 	Name     string         `json:"name,omitempty"`
+}
+
+const receiverCameraPrefix = "receiver-camera:"
+
+func (s receiverSource) cameraKey() string { return receiverCameraPrefix + s.Endpoint.String() }
+
+// Preview 8 profiles already have a primary selected camera. Keep it in that
+// field so older versions can still open the same profile.
+func (c Config) selectedReceiverCameras() []receiverSource {
+	var selected []receiverSource
+	if source, ok := c.ReceiverSources["camera"]; ok {
+		selected = append(selected, source)
+	}
+	return append(selected, c.ReceiverCameras...)
+}
+
+func (c Config) receiverCamera(key string) (receiverSource, bool) {
+	if source, ok := c.ReceiverSources["camera"]; ok && source.cameraKey() == key {
+		return source, true
+	}
+	for _, source := range c.ReceiverCameras {
+		if source.cameraKey() == key {
+			return source, true
+		}
+	}
+	return receiverSource{}, false
 }
 
 func (c Config) receiverEndpoint(kind string) (string, int) {
@@ -153,6 +181,15 @@ func (c Config) extraCamera(key string) (cameraChannel, bool) {
 }
 
 func (c Config) streamKeys() []string {
+	if c.Role == "client" {
+		if selected := c.selectedReceiverCameras(); len(selected) != 0 {
+			keys := make([]string, 0, len(selected)+1)
+			for _, source := range selected {
+				keys = append(keys, source.cameraKey())
+			}
+			return append(keys, "screen")
+		}
+	}
 	keys := []string{"camera", "screen"}
 	if c.Role == "server" {
 		for _, channel := range c.Cameras {
@@ -166,6 +203,7 @@ func (c Config) clone() Config {
 	c.Camera, c.Screen = c.Camera.Clone(), c.Screen.Clone()
 	c.Cameras = append([]cameraChannel(nil), c.Cameras...)
 	c.ReceiverSources = maps.Clone(c.ReceiverSources)
+	c.ReceiverCameras = slices.Clone(c.ReceiverCameras)
 	for i := range c.Cameras {
 		c.Cameras[i].Camera = c.Cameras[i].Camera.Clone()
 	}
@@ -204,6 +242,7 @@ func loadConfig(role string) Config {
 			Cameras         []cameraChannel
 			CameraName      string                    `json:"camera_name"`
 			ReceiverSources map[string]receiverSource `json:"receiver_sources"`
+			ReceiverCameras []receiverSource          `json:"receiver_cameras"`
 		}
 		if json.Unmarshal(b, &saved) == nil {
 			maps.Copy(c.Camera, saved.Camera)
@@ -211,6 +250,7 @@ func loadConfig(role string) Config {
 			c.Cameras = saved.Cameras
 			c.CameraName = saved.CameraName
 			c.ReceiverSources = saved.ReceiverSources
+			c.ReceiverCameras = saved.ReceiverCameras
 			for i := range c.Cameras {
 				values := schema.Defaults["camera"].Clone()
 				maps.Copy(values, c.Cameras[i].Camera)
@@ -300,6 +340,16 @@ func validate(c Config) error {
 			key := strings.ToLower(host) + ":" + strconv.Itoa(port)
 			if endpoints[key] {
 				return fmt.Errorf("потоки одного передатчика требуют разных UDP-портов")
+			}
+			endpoints[key] = true
+		}
+		for _, camera := range c.ReceiverCameras {
+			if !camera.Endpoint.Addr().Is4() || camera.Endpoint.Addr().IsUnspecified() || camera.Endpoint.Port() == 0 {
+				return fmt.Errorf("недопустимый адрес камеры")
+			}
+			key := camera.Endpoint.String()
+			if endpoints[key] {
+				return fmt.Errorf("источник %s уже выбран", key)
 			}
 			endpoints[key] = true
 		}

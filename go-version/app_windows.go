@@ -46,6 +46,7 @@ type Application struct {
 	roleBox           *walk.ComboBox
 	host              *walk.LineEdit
 	hostRow           *walk.Composite
+	primaryCameraRow  *walk.Composite
 	message           *walk.Label
 	economyButton     *walk.PushButton
 	streams           map[string]*streamControls
@@ -56,6 +57,7 @@ type Application struct {
 	cameraDrafts      []func() cameraChannel
 	primaryCameraName func() string
 	receiverSources   map[string]receiverSource
+	receiverCameras   []receiverSource
 	catalog           *lanCatalog
 	devices           map[string][]NamedDevice
 	building          bool
@@ -221,8 +223,11 @@ func (a *Application) updateRoleControls() {
 
 func (a *Application) streamRow(kind, title string) Widget {
 	row := a.streams[kind]
-	return Composite{Name: "card", Layout: HBox{Margins: Margins{8, 0, 8, 0}}, MinSize: Size{0, 48}, MaxSize: Size{4096, 48}, Children: []Widget{
-		Label{Text: title, MinSize: Size{106, 0}},
+	var primary **walk.Composite
+	if kind == "camera" {
+		primary = &a.primaryCameraRow
+	}
+	children := []Widget{
 		TextEdit{AssignTo: &row.status, ReadOnly: true, VScroll: true, MinSize: Size{150, 48}, MaxSize: Size{4096, 48}, StretchFactor: 1},
 		PushButton{AssignTo: &row.toggle, Text: "Запустить", MinSize: Size{96, 0}, OnClicked: func() {
 			if s := a.sessions[kind]; s != nil && s.active.Load() {
@@ -232,7 +237,11 @@ func (a *Application) streamRow(kind, title string) Widget {
 			}
 		}},
 		PushButton{AssignTo: &row.preview, Text: "Показать", MinSize: Size{94, 0}, OnClicked: func() { a.show(kind) }},
-	}}
+	}
+	if title != "" {
+		children = append([]Widget{Label{Text: title, MinSize: Size{106, 0}}}, children...)
+	}
+	return Composite{AssignTo: primary, Name: "card", Layout: HBox{Margins: Margins{8, 0, 8, 0}}, MinSize: Size{0, 48}, MaxSize: Size{4096, 48}, Children: children}
 }
 func (a *Application) error(e error) {
 	if e != nil {
@@ -284,8 +293,10 @@ func (a *Application) forms(c Config) error {
 	a.cameraDrafts = nil
 	a.primaryCameraName = nil
 	a.receiverSources = maps.Clone(c.ReceiverSources)
+	a.receiverCameras = slices.Clone(c.ReceiverCameras)
+	a.primaryCameraRow.SetVisible(c.Role != "client" || len(c.selectedReceiverCameras()) == 0)
 	for key := range a.streams {
-		if strings.HasPrefix(key, "camera:") {
+		if strings.HasPrefix(key, "camera:") || strings.HasPrefix(key, receiverCameraPrefix) {
 			delete(a.streams, key)
 		}
 	}
@@ -352,7 +363,9 @@ func (a *Application) forms(c Config) error {
 			if tab.title == "Звук" {
 				kind = "audio"
 			}
-			if selected, ok := c.ReceiverSources[kind]; ok && selected.Endpoint.IsValid() {
+			if kind == "camera" {
+				children = append(children, a.receiverCameraCards(c)...)
+			} else if selected, ok := c.ReceiverSources[kind]; ok && selected.Endpoint.IsValid() {
 				children = append(children, Label{Text: "Источник в сети · " + receiverSourceLabel(selected), EllipsisMode: EllipsisEnd})
 			}
 		}
@@ -526,6 +539,7 @@ func (a *Application) draft() Config {
 	c.Host = strings.TrimSpace(a.host.Text())
 	if c.Role == "client" {
 		c.ReceiverSources = maps.Clone(a.receiverSources)
+		c.ReceiverCameras = slices.Clone(a.receiverCameras)
 	}
 	for kind, fields := range a.getters {
 		target := c.Camera
@@ -574,7 +588,29 @@ func (a *Application) applySettings(next Config) bool {
 	a.store.Set(next)
 	a.configureCatalog(next)
 	var restartKeys []string
+	selected := next.selectedReceiverCameras()
 	for kind, s := range a.sessions {
+		if previous, isNetworkCamera := old.receiverCamera(kind); old.Role == "client" && isNetworkCamera {
+			source, retained := next.receiverCamera(kind)
+			if !retained {
+				if s.active.Load() && len(selected) <= 1 {
+					replacement := "camera"
+					if len(selected) == 1 {
+						replacement = selected[0].cameraKey()
+					}
+					if !slices.Contains(restartKeys, replacement) {
+						restartKeys = append(restartKeys, replacement)
+					}
+				}
+				a.stop(kind)
+			} else if s.active.Load() {
+				if previous.Name != source.Name {
+					_ = s.view.window.SetTitle(brand.Name + " — " + receiverSourceLabel(source))
+				}
+				s.view.ApplyWindowOptions()
+			}
+			continue
+		}
 		prior, extra := old.extraCamera(kind)
 		channel, exists := next.extraCamera(kind)
 		if extra && !exists {
@@ -582,6 +618,11 @@ func (a *Application) applySettings(next Config) bool {
 			continue
 		}
 		if s == nil || !s.active.Load() {
+			continue
+		}
+		if kind == "camera" && next.Role == "client" && len(selected) != 0 {
+			a.stop(kind)
+			restartKeys = append(restartKeys, selected[0].cameraKey())
 			continue
 		}
 		if extra {
@@ -761,6 +802,12 @@ func (a *Application) startFromPanel(kinds ...string) {
 		if s := a.sessions[kind]; s != nil && s.active.Load() {
 			continue
 		}
+		if strings.HasPrefix(kind, receiverCameraPrefix) {
+			if _, exists := a.store.Get().receiverCamera(kind); !exists {
+				a.message.SetText("Нажмите «Применить», чтобы добавить выбранную камеру.")
+				continue
+			}
+		}
 		a.start(kind)
 	}
 }
@@ -784,7 +831,8 @@ func (a *Application) start(kind string) {
 	}
 	c := a.store.Get()
 	channel, extra := c.extraCamera(kind)
-	if kind != "camera" && kind != "screen" && (!extra || c.Role != "server") {
+	networkCamera, selectedCamera := c.receiverCamera(kind)
+	if kind != "camera" && kind != "screen" && !(extra && c.Role == "server") && !(selectedCamera && c.Role == "client") {
 		return
 	}
 	if extra && channel.Camera.Str("camera") == "" {
@@ -828,6 +876,8 @@ func (a *Application) start(kind string) {
 		s.cameraStore = store
 	} else if c.Role == "server" && kind == "camera" {
 		title = c.primaryCameraName()
+	} else if selectedCamera {
+		title, viewKind = receiverSourceLabel(networkCamera), "camera"
 	}
 	view, e := newNamedViewer(viewKind, title, store, func() { s.active.Store(false); s.cancel() })
 	if e != nil {
@@ -861,6 +911,9 @@ func (a *Application) start(kind string) {
 	if kind != "screen" {
 		if c.Role == "client" {
 			host, port := c.receiverEndpoint("camera")
+			if selectedCamera {
+				host, port = networkCamera.Endpoint.Addr().String(), int(networkCamera.Endpoint.Port())
+			}
 			go receiveVideo(ctx, "WC30", port, host, input, s.status)
 		} else {
 			var sender *VideoSender
